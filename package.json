@@ -38,6 +38,7 @@
     "check": "npm run typecheck && npm run test && npm run build",
     "doctor": "node lib/cli-doctor.js",
     "probe": "node lib/cli-probe.js",
+    "e2e": "npm run build && node scripts/e2e.mjs",
     "prepack": "npm run check"
   },
   "dsh": {

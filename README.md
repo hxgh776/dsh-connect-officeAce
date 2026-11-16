@@ -106,9 +106,12 @@ OK   upstream     模型网关 /v1/models 可用（38 个模型）
 npm install
 npm run check     # typecheck + test + build
 npm run doctor
+npm run e2e       # 端到端：本机登录 → 凭据 → 网关 → shim → 对话/流式/工具调用
 ```
 
 测试：`tsc -p tsconfig.test.json && node scripts/test.mjs`（67 条，单进程跑，原因见 DEVELOPMENT.md）。
+
+`npm run e2e` 打真实网关、会消耗少量额度（单次跑下来不到 1000 token），只在已登录 OfficeAce 的机器上跑；它不使用 `DSH_OFFICEACE_PROVIDER_STATE_FILE` 之类的旁路，凭据来源必须是 `local-session`。
 
 ## License
 
