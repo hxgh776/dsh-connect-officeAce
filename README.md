@@ -19,6 +19,7 @@
 | 模型网关地址与鉴权 | ✅ 实测 | `https://<model_api_url_base>/v1` + Basic app-key |
 | 对话：SSE / reasoning / tool_calls / usage | ✅ 实测 200 + 流式增量 | 见 protocol §3 |
 | 上游端到端 `probe` | ✅ 真跑通（`deepseek-v4-flash`） | 见下方验证 |
+| 设置面板（`settings.section`） | ✅ 已实现；浏览器端脚本静态校验 | `src/client.js` → `lib/client.js`，见「设置面板」 |
 | 用量 / 积分看板 | ❌ 未实现 | 没有可验证的查询接口 |
 | 每日签到、模型管理 UI、多区域面板 | ❌ 不在范围 | 无证据，不臆造 |
 
@@ -48,6 +49,17 @@ dsh plugin --profile desktop add <仓库路径>
 ```
 
 `@deepseek-ai/*` 与 `@earendil-works/pi-ai` 为 peerDependencies，由 DSH 宿主提供，不打包。
+
+## 设置面板
+
+DSH 的设置页不会自动生成：`registerConfigurableProviders` 只把 provider 放进模型列表，左侧导航里的「设置 → OfficeAce」由插件自己的浏览器脚本注册 `settings.section` slot。
+
+- 源码是手写的 `src/client.js`（CommonJS-shaped 普通脚本：`window.__ModuleLoader__.load({ id, factory })`，顶部不能出现 `import`，否则整个 web boot 会挂）。
+- 构建时由 `scripts/copy-client.mjs` 复制到 `lib/client.js`（`lib/` 是 gitignore 的产物目录，所以这一步不能省）。
+- 面板内容只走三条已存在的路由：`status`（登录状态、脱敏账号、到期时间、凭据来源、网关 baseUrl）、`catalog`（模型清单）、`__save`（只写 `enabledModelIds`）。**没有任何把凭据送到浏览器的字段。**
+- `npm run verify:client` 做静态校验：CJS 形态、`require` 白名单、导出集合、`inject = ["slots","locale"]`、`settings.section` 注册、`package.json` 的 `exports["./client"]` 与 `dsh.client`、产物一致性。
+
+改完源码后要重新构建并重新 `dsh plugin --profile desktop add file:<仓库路径>`（`file:` 是拷贝，不是链接），再重启 DSH 桌面端。
 
 ## 设置
 

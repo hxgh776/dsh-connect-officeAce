@@ -2,7 +2,7 @@
   "name": "dsh-connect-officeace",
   "displayName": "DSH Connect OfficeAce",
   "description": "把本机已登录的 OfficeAce（华为云）账号接入 DeepSeek Harness：OpenAI 兼容对话模型（含工具调用透传）、只读本机会话诊断。上游协议只实现已在参考实现或本机安装中核实过的部分，未核实的能力不实现并在 docs/protocol.md 标注。",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -20,6 +20,7 @@
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
     },
+    "./client": "./lib/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
@@ -32,10 +33,11 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-client.mjs",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.client.json",
     "test": "tsc -p tsconfig.test.json && node scripts/test.mjs",
-    "check": "npm run typecheck && npm run test && npm run build",
+    "check": "npm run typecheck && npm run test && npm run build && npm run verify:client",
+    "verify:client": "node scripts/verify-client.mjs",
     "doctor": "node lib/cli-doctor.js",
     "probe": "node lib/cli-probe.js",
     "e2e": "npm run build && node scripts/e2e.mjs",
@@ -44,6 +46,15 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-settings-plugins",
+        "@deepseek-ai/dsh-client-locale"
+      ],
+      "platform": "web"
     }
   },
   "peerDependencies": {

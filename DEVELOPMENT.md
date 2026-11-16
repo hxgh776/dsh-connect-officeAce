@@ -34,6 +34,16 @@ ExperimentalWarning: SQLite is an experimental feature and might change at any t
 
 这是 Node 的提示，不是插件问题。CI 里同样会出现。
 
+## 浏览器端（设置面板）
+
+`src/client.js` 是手写的普通脚本，不是 TS、也不是 ES module：
+
+- 必须保持 CJS-shaped：`window.__ModuleLoader__.load({ id, factory })`，顶部不能有 `import`/`export`，否则整个 web boot 会挂。
+- `require` 只能用宿主注入的两个：`react`、`react/jsx-runtime`（由 `dsh.client.inject` 映射）。
+- 构建时 `scripts/copy-client.mjs` 复制到 `lib/client.js`；`lib/` 是 gitignore 的产物，所以**改完必须重新 build**。
+- `npm run verify:client` 静态校验它（形态、导出、slot、package.json 契约、路由白名单）。
+- 装的是 `file:` 拷贝：改完要重新 `dsh plugin --profile desktop add file:<仓库路径>`，再重启 DSH。
+
 ## 凭据解析与 wincred
 
 凭据来源顺序：设置 `apiKey` → 环境 `DSH_OFFICEACE_API_KEY` → 本机 OfficeAce 登录态。

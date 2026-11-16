@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.1 — 2026-11-16
+
+补上**浏览器端**：此前只有服务端，DSH 设置页里看不到这个插件。
+
+### 新增
+
+- `src/client.js`：CJS-shaped 普通脚本，`window.__ModuleLoader__.load({ id, factory })`，导出 `apply` / `inject = ["slots","locale"]` / `name` / `translator` / `zh` / `en`，注册 `settings.section`（设置左侧导航「设置 → OfficeAce」），并挂 `plugins.bundle.config` / `plugins.row.config` 两个卡片位。
+- 面板内容全部来自已有路由：登录状态（脱敏账号、到期时间）、凭据来源（settings / env / local-session）、网关 baseUrl、token 存放位置、模型勾选（`enabledModelIds`）。**没有新增任何把凭据送到浏览器的字段。**
+- `scripts/copy-client.mjs`：构建后把 `src/client.js` 复制到 `lib/client.js`，复制前校验 CJS 形态、module-loader 注册、`require` 白名单与导出集合。
+- `scripts/verify-client.mjs`：`npm run verify:client` 的静态校验（18 项），覆盖产物一致性、`package.json` 的 `exports["./client"]` 与 `dsh.client`、路由白名单、无凭据字段。
+- `types/client-env.d.ts` + `tsconfig.client.json`：`tsc -p tsconfig.client.json` 校验浏览器脚本；React 用最小 ambient 声明，不引入运行时依赖。
+- `package.json`：`exports["./client"]`、`dsh.client`（`inject` 与 loomy 一致，`platform: "web"`）、`build` 挂复制步骤、`check` 纳入 `verify:client`。
+
+### 说明
+
+- 服务端逻辑未改动。
+- 无法在此环境看到 Electron UI，因此只做静态验证；「设置页是否真的出现」需重启 DSH 后由人确认。
+
 ## 0.2.0 — 2026-11-16
 
 补上 0.1.0 里被错误归为「证据不足」的两块：本机登录态复用与模型网关地址。**这两条推翻 0.1.0 的结论：不是证据不足，是当时没去读。**
