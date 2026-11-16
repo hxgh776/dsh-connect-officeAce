@@ -401,10 +401,10 @@ window.__ModuleLoader__.load({
 
 		//#region locale
 		const zh = {
-			"card.title": "OfficeAce（华为云）",
-			"card.description": "复用本机已登录的 OfficeAce 账号：对话模型走 OpenAI 兼容网关，支持流式、思考链与工具调用。",
-			"card.navLabel": "OfficeAce",
-			"card.privacy": "本插件只读取 OfficeAce 桌面端的登录态（Windows 凭据管理器，只读），凭据不出现在浏览器请求里；本页只展示脱敏后的状态。",
+			"card.title": "果办（OfficeAce）",
+			"card.description": "复用本机已登录的果办（OfficeAce）账号：对话模型走 OpenAI 兼容网关，支持流式、思考链与工具调用。",
+			"card.navLabel": "果办",
+			"card.privacy": "本插件只读取果办桌面端的登录态（Windows 凭据管理器，只读），凭据不出现在浏览器请求里；本页只展示脱敏后的状态。",
 			"common.refresh": "刷新",
 			"common.loading": "加载中…",
 			"status.signedIn": "已登录",
@@ -412,13 +412,13 @@ window.__ModuleLoader__.load({
 			"status.expired": "登录已过期",
 			"status.account": "账号 {{id}}",
 			"status.expiresAt": "凭证到期 {{at}}",
-			"status.signedOutHint": "未检测到本机 OfficeAce 登录态。请先打开 OfficeAce 桌面端登录，再回来刷新。",
+			"status.signedOutHint": "未检测到本机果办登录态。请先打开果办桌面端登录，再回来刷新。",
 			"credential.title": "访问凭据",
 			"credential.source": "来源",
 			"credential.missing": "未解析到",
 			"credential.settings": "设置里的 API Key",
 			"credential.env": "环境变量 DSH_OFFICEACE_API_KEY",
-			"credential.localSession": "本机 OfficeAce 登录态",
+			"credential.localSession": "本机果办登录态",
 			"credential.baseUrl": "模型网关",
 			"credential.token": "token 存放位置",
 			"credential.wincred": "Windows 凭据管理器（只读）",
@@ -430,14 +430,14 @@ window.__ModuleLoader__.load({
 			"save.apply": "保存模型选择",
 			"save.done": "已保存",
 			"save.failed": "保存失败",
-			"local.app": "OfficeAce 客户端",
+			"local.app": "果办（OfficeAce）客户端",
 			"local.running": "运行中",
 			"local.notRunning": "未运行",
 			"local.store": "本地状态库",
 			"local.readable": "可读",
 			"local.unreadable": "不可读",
 			"local.notFound": "未找到",
-			"local.usageNote": "用量 / 积分看板未实现：OfficeAce 没有可验证的查询接口。",
+			"local.usageNote": "用量 / 积分看板未实现：果办没有可验证的查询接口。",
 		};
 
 		const en = {
