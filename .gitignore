@@ -1,0 +1,12 @@
+node_modules/
+lib/
+out-test/
+.npm-cache/
+.refs/
+*.tgz
+*.log
+
+# Runtime-owned scaffolding in the working directory — not part of this repo.
+/AGENTS.md
+/.dsh/
+/.multica/

@@ -1,0 +1,65 @@
+{
+  "name": "dsh-connect-officeace",
+  "displayName": "DSH Connect OfficeAce",
+  "description": "把本机已登录的 OfficeAce（华为云）账号接入 DeepSeek Harness：OpenAI 兼容对话模型（含工具调用透传）、只读本机会话诊断。上游协议只实现已在参考实现或本机安装中核实过的部分，未核实的能力不实现并在 docs/protocol.md 标注。",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "bin": {
+    "dsh-connect-officeace": "lib/bin.js",
+    "dsh-connect-officeace-probe": "lib/cli-probe.js",
+    "dsh-connect-officeace-doctor": "lib/cli-doctor.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "docs",
+    "cordis.patch.yml",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.test.json && node scripts/test.mjs",
+    "check": "npm run typecheck && npm run test && npm run build",
+    "doctor": "node lib/cli-doctor.js",
+    "probe": "node lib/cli-probe.js",
+    "prepack": "npm run check"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.1-rc.1 <5.0.0-0",
+    "@deepseek-ai/dsh-host-webserver": ">=0.1.7-rc.1 <0.3.0-0",
+    "@deepseek-ai/dsh-llm": ">=0.1.7-rc.1 <0.3.0-0",
+    "@deepseek-ai/dsh-llm-pi-ai": ">=0.1.7-rc.1 <0.3.0-0",
+    "@deepseek-ai/schemastery": ">=3.18.1-rc.1 <4.0.0-0",
+    "@earendil-works/pi-ai": ">=0.85.0-rc.1 <2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-host-webserver": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "typescript": "^5.9.3"
+  }
+}

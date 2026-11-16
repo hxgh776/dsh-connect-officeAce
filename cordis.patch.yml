@@ -1,0 +1,7 @@
+# Register the OfficeAce provider without changing the profile's default model.
+# The plugin reads OfficeAce's own local store (read-only) for account
+# diagnostics and takes the model credential from its own settings — it never
+# writes to OfficeAce's state and never shares credentials with other plugins.
+- insert:
+    - id: dsh-connect-officeace
+      name: dsh-connect-officeace
