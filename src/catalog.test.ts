@@ -3,6 +3,7 @@ import test from "node:test";
 import {
 	DEFAULT_MODEL_DEFAULTS,
 	KNOWN_MODEL_IDS,
+	MEASURED_USABLE_MODEL_IDS,
 	VERIFIED_WORKING_MODEL_IDS,
 	catalogEntriesOf,
 	chatModelsOf,
@@ -10,6 +11,7 @@ import {
 	isLikelyChatModel,
 	normalizeModelRow,
 	toPiModel,
+	usableModelsOf,
 } from "./catalog.js";
 
 test("normalizeModelRow keeps wire values and fills only missing ones", () => {
@@ -66,6 +68,28 @@ test("an absent selection serves everything, an empty selection serves nothing",
 	assert.deepEqual(
 		enabledModelsOf(rows, ["b"]).map((row) => row.id),
 		["b"],
+	);
+});
+
+test("an untouched picker serves only the measured-usable ids, verified first", () => {
+	const rows = chatModelsOf([
+		{ id: "deepseek-v4.1-flash" },
+		{ id: "glm-5.1" },
+		{ id: "deepseek-v4-flash" },
+		{ id: "openpangu-2.0-pro" },
+	]);
+	assert.deepEqual(
+		usableModelsOf(rows).map((row) => row.id),
+		["deepseek-v4-flash", "glm-5.1"],
+	);
+	assert.ok(MEASURED_USABLE_MODEL_IDS.includes("deepseek-v4-flash"));
+});
+
+test("a disjoint entitlement set falls back to the whole catalog instead of nothing", () => {
+	const rows = chatModelsOf([{ id: "some-other-model" }]);
+	assert.deepEqual(
+		usableModelsOf(rows).map((row) => row.id),
+		["some-other-model"],
 	);
 });
 

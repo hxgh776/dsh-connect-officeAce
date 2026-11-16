@@ -27,11 +27,13 @@ import {
 	DEFAULT_CONTEXT_WINDOW,
 	DEFAULT_MAX_OUTPUT_TOKENS,
 	KNOWN_MODEL_IDS,
+	MEASURED_USABLE_MODEL_IDS,
 	OFFICEACE_PROVIDER,
 	OFFICEACE_PROVIDER_DISPLAY_NAME,
 	VERIFIED_WORKING_MODEL_IDS,
 	catalogEntriesOf,
 	enabledModelsOf,
+	usableModelsOf,
 } from "./catalog.js";
 import { AccessResolver, tokenLocationOf } from "./credentials.js";
 import { createDiscovery } from "./discovery.js";
@@ -196,7 +198,7 @@ async function statusViewOf(
 		catalog: discovery.describe(),
 		baseUrl: credential.baseUrl ?? null,
 		knownModelIds: KNOWN_MODEL_IDS,
-		verifiedModelIds: VERIFIED_WORKING_MODEL_IDS,
+		verifiedModelIds: MEASURED_USABLE_MODEL_IDS,
 		capabilities: {
 			chatCompletions: true,
 			toolCallsPassThrough: true,
@@ -236,7 +238,15 @@ function apply(ctx: any, config: Partial<ResolvedSettings> = {}): void {
 		maxTokens: DEFAULT_MAX_OUTPUT_TOKENS,
 	});
 	const discovery = createDiscovery(upstream, { modelDefaults });
-	const servedRows = () => enabledModelsOf(discovery.current(), effectiveIds(current));
+	// Nothing picked yet → show only the ids measured usable on this machine. A
+	// listed-but-unentitled model answers 404 the moment it is chosen, which is
+	// exactly the failure the raw catalog produced.
+	const servedRows = () => {
+		const ids = effectiveIds(current);
+		return ids === undefined
+			? usableModelsOf(discovery.current())
+			: enabledModelsOf(discovery.current(), ids);
+	};
 
 	try {
 		shim = createShim({

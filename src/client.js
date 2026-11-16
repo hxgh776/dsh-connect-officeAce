@@ -322,6 +322,7 @@ window.__ModuleLoader__.load({
 									children: ` (${t("models.source")}: ${catalog.source}${Number.isFinite(catalog?.count) ? `, ${catalog.count}` : ""})`,
 								}) : null,
 							] }, "models-title"),
+							react_jsx_runtime.jsx("div", { className: "oac-note", children: t("models.usableHint") }, "models-hint"),
 							models.length > 0 ? react_jsx_runtime.jsx("div", {
 								className: "oac-models",
 								children: models.map((model) => {
@@ -401,10 +402,10 @@ window.__ModuleLoader__.load({
 
 		//#region locale
 		const zh = {
-			"card.title": "果办（OfficeAce）",
-			"card.description": "复用本机已登录的果办（OfficeAce）账号：对话模型走 OpenAI 兼容网关，支持流式、思考链与工具调用。",
+			"card.title": "华为果办",
+			"card.description": "复用本机已登录的华为果办（OfficeAce）账号：对话模型走 OpenAI 兼容网关，支持流式、思考链与工具调用。",
 			"card.navLabel": "果办",
-			"card.privacy": "本插件只读取果办桌面端的登录态（Windows 凭据管理器，只读），凭据不出现在浏览器请求里；本页只展示脱敏后的状态。",
+			"card.privacy": "本插件只读取华为果办桌面端的登录态（Windows 凭据管理器，只读），凭据不出现在浏览器请求里；本页只展示脱敏后的状态。",
 			"common.refresh": "刷新",
 			"common.loading": "加载中…",
 			"status.signedIn": "已登录",
@@ -423,6 +424,7 @@ window.__ModuleLoader__.load({
 			"credential.token": "token 存放位置",
 			"credential.wincred": "Windows 凭据管理器（只读）",
 			"models.title": "模型清单",
+			"models.usableHint": "未勾选时只展示本机实测可用的模型；目录里其余模型可能对该账号未开通，选中会报 404。",
 			"models.source": "来源",
 			"models.empty": "暂无模型（网关不可达且无缓存）",
 			"models.refresh": "刷新目录",
@@ -463,6 +465,7 @@ window.__ModuleLoader__.load({
 			"credential.token": "Token location",
 			"credential.wincred": "Windows Credential Manager (read-only)",
 			"models.title": "Models",
+			"models.usableHint": "Until you pick any, only models measured usable here are listed; the rest of the catalog may be unentitled for this account and answer 404.",
 			"models.source": "source",
 			"models.empty": "No models (gateway unreachable and no cache)",
 			"models.refresh": "Refresh catalog",

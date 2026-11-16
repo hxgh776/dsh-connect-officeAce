@@ -120,7 +120,13 @@ providerState:
 - `deepseek-v4.1-flash`（OfficeAce 自己 agent 配置里的 defaultModel）→ **404** `ModelArts.81016 The model … is not available with api url /inference/v1/chat/completions`
 - `deepseek-v4-flash` → **200**，正常返回
 
-所以「配置里的默认模型」不等于「当前账号可用的模型」。插件把 `deepseek-v4-flash` 记为 `VERIFIED_WORKING_MODEL_IDS`，`probe` 优先用它。
+全量实测（2026-11-16，本机账号）：对目录里 20 条 chat id 逐个发 `max_tokens:8` 的最小补全，**只有 6 条返回 200**：`deepseek-v4-flash`、`glm-5.3`、`glm-5.2`、`glm-5.1`、`deepseek-v4.1-flash-0930`、`deepseek-v4-flash-0731`。其余 14 条失败：`ModelArts.81009 Invalid model`（模型名在该网关不存在）、`ModelArts.81016 … not available with api url`（存在但当前 api url 不提供）、`ModelArts.81004 … you do not have access to it`（无权限）三类都有。目录里另有 18 条图像/视频/embedding/rerank 模型被名称启发式过滤掉。
+
+所以「列在 `/v1/models` 里」不等于「这个账号能调用」。插件据此：
+
+- `MEASURED_USABLE_MODEL_IDS` 记这 6 条，**未勾选任何模型时选择器只列它们**（顺序把实测默认 `deepseek-v4-flash` 排最前）；
+- 账号没有这 6 条中任何一条时回退到整个目录，避免选择器变空；
+- 设置里勾选 `enabledModelIds` 后以勾选为准（用户自己的账号可能开通了别的模型）。
 
 ## 3. 对话协议【实测】
 

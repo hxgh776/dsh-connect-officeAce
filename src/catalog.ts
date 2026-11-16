@@ -23,8 +23,8 @@ import type { ModelDefaults, OfficeAceModelRow } from "./types.js";
 /** Provider id every registration in this plugin keys on. */
 export const OFFICEACE_PROVIDER = "officeace";
 
-/** Provider display name in DSH's picker. */
-export const OFFICEACE_PROVIDER_DISPLAY_NAME = "OfficeAce（华为云）";
+/** Provider display name in DSH's picker. The product's Chinese name is 果办. */
+export const OFFICEACE_PROVIDER_DISPLAY_NAME = "华为果办";
 
 /** Fallback context window when the endpoint does not publish one. ASSUMED. */
 export const DEFAULT_CONTEXT_WINDOW = 200_000;
@@ -40,8 +40,27 @@ export const DEFAULT_MAX_OUTPUT_TOKENS = 32_000;
  */
 export const KNOWN_MODEL_IDS: readonly string[] = ["deepseek-v4.1-flash", "deepseek-v4.1-flash-1017-host"];
 
-/** Model id this repository measured a 200 + SSE completion for. */
+/** Model ids this repository measured a 200 + SSE completion for. */
 export const VERIFIED_WORKING_MODEL_IDS: readonly string[] = ["deepseek-v4-flash"];
+
+/**
+ * Chat ids that answered 200 on the inspected account (2026-11-16), ordered so
+ * the verified default comes first. MEASURED, not assumed: the same run sent a
+ * one-word completion to every chat id the gateway lists, and 14 of 20 answered
+ * 404 / 403. A listed model is therefore NOT necessarily an entitled model, so
+ * the picker defaults to this set instead of the raw catalog.
+ *
+ * The set is account-specific. A different login may entitle different ids;
+ * that is what `enabledModelIds` is for.
+ */
+export const MEASURED_USABLE_MODEL_IDS: readonly string[] = [
+	"deepseek-v4-flash",
+	"glm-5.3",
+	"glm-5.2",
+	"glm-5.1",
+	"deepseek-v4.1-flash-0930",
+	"deepseek-v4-flash-0731",
+];
 
 /** Default model for `probe`: the one verified to answer on a real account. */
 export const DEFAULT_PROBE_MODEL = VERIFIED_WORKING_MODEL_IDS[0] ?? "deepseek-v4-flash";
@@ -167,6 +186,20 @@ export function enabledModelsOf(
 	if (enabledIds === undefined) return [...rows];
 	const wanted = new Set(enabledIds);
 	return rows.filter((row) => wanted.has(row.id));
+}
+
+/**
+ * The rows the picker shows when the user has not picked anything: only the ids
+ * measured usable on this machine, in `MEASURED_USABLE_MODEL_IDS` order so the
+ * verified default leads. Falls back to the whole catalog when the account
+ * entitles none of them (a disjoint entitlement set must not leave the picker
+ * empty).
+ */
+export function usableModelsOf(rows: readonly OfficeAceModelRow[]): OfficeAceModelRow[] {
+	const order = new Map(MEASURED_USABLE_MODEL_IDS.map((id, index) => [id, index]));
+	const picked = rows.filter((row) => order.has(row.id));
+	if (picked.length === 0) return [...rows];
+	return picked.sort((left, right) => (order.get(left.id) ?? 0) - (order.get(right.id) ?? 0));
 }
 
 /** The `{id, name}` rows the settings card's checklist renders. */
