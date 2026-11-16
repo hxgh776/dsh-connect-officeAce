@@ -1,21 +1,21 @@
 /**
- * The model catalog: OfficeAce rows → pi-ai model descriptors.
+ * The model catalog: OfficeAce gateway rows → pi-ai model descriptors.
  *
- * DSH rejects an ENTIRE provider when one model lacks a positive-integer
- * context window (`INVALID_MODEL_CONTEXT`), so normalization is conservative
- * and explicit about its one assumption:
+ * Verified shape of `GET {base}/v1/models` (OfficeAce 1.8.1):
  *
- * - the model id always comes from the wire (`id`);
- * - the context window comes from the wire when the endpoint publishes it
- *   (`context_length` / `context_window` / `contextWindow`) and otherwise from
- *   the configurable default. That default is an ASSUMPTION about OfficeAce,
- *   not a measured number — see docs/protocol.md §4.
+ * ```json
+ * {"object":"list","data":[{"id":"deepseek-v4-flash","object":"list","created":0,"owned_by":"system"}]}
+ * ```
  *
- * The two model ids below are the only ones this repository could verify: they
- * appear as `defaultModel` in OfficeAce's own `office-claw-config.json`
- * (`deepseek-v4.1-flash` for office/assistant/agentteams,
- * `deepseek-v4.1-flash-1017` for agentteam). They are used for diagnostics,
- * NOT invented as a selectable offline catalog.
+ * There is NO context length and NO capability flag in the wire rows. That has
+ * two consequences this module makes explicit:
+ *
+ * - every descriptor needs a `contextWindow`, but the endpoint does not publish
+ *   one; the configurable `defaultContextWindow` fills the gap and is labelled
+ *   an ASSUMPTION in docs/protocol.md §4;
+ * - the catalog mixes chat models with image/video/embedding/rerank models, so a
+ *   heuristic filter keeps obvious non-chat ids out of the picker (documented
+ *   as a heuristic, not a contract).
  */
 
 import type { ModelDefaults, OfficeAceModelRow } from "./types.js";
@@ -32,8 +32,32 @@ export const DEFAULT_CONTEXT_WINDOW = 200_000;
 /** Fallback output budget. ASSUMED. */
 export const DEFAULT_MAX_OUTPUT_TOKENS = 32_000;
 
-/** Model ids verified in OfficeAce's own agent config (not a full catalog). */
-export const KNOWN_MODEL_IDS: readonly string[] = ["deepseek-v4.1-flash", "deepseek-v4.1-flash-1017"];
+/**
+ * Model ids verified as the agent defaults in OfficeAce's own config. Their
+ * availability on the gateway is account-dependent: on the inspected account
+ * `deepseek-v4.1-flash` answers 404 ("not available with api url
+ * /inference/v1/chat/completions") while `deepseek-v4-flash` works.
+ */
+export const KNOWN_MODEL_IDS: readonly string[] = ["deepseek-v4.1-flash", "deepseek-v4.1-flash-1017-host"];
+
+/** Model id this repository measured a 200 + SSE completion for. */
+export const VERIFIED_WORKING_MODEL_IDS: readonly string[] = ["deepseek-v4-flash"];
+
+/** Default model for `probe`: the one verified to answer on a real account. */
+export const DEFAULT_PROBE_MODEL = VERIFIED_WORKING_MODEL_IDS[0] ?? "deepseek-v4-flash";
+
+/**
+ * Heuristic: obvious non-chat ids seen in the live catalog (`vidu/…`,
+ * `pixverse/…`, `qwen-image…`, `bge-…`). There are no capability flags to key
+ * on, so this is a name filter and is documented as such.
+ */
+const NON_CHAT_ID =
+	/(^|\/)(vidu|pixverse)\/|(^|[-_/])(image|images|video|embed|embedding|rerank|reranker|ocr|asr|tts|whisper|speech|audio)([-_/]|$)|^(bge-|qwen-image|qwen_image)/iu;
+
+/** Whether a model id looks like a chat model this plugin should offer. */
+export function isLikelyChatModel(id: string): boolean {
+	return !NON_CHAT_ID.test(id);
+}
 
 export const DEFAULT_MODEL_DEFAULTS: ModelDefaults = {
 	contextWindow: DEFAULT_CONTEXT_WINDOW,
@@ -54,11 +78,8 @@ function stringOf(value: unknown): string | undefined {
 /**
  * Normalize one wire row.
  *
- * Accepts the OpenAI `/models` shape (`{id, object, created, owned_by}`) and the
- * richer shape OfficeAce's own MaaS endpoint is reported to use
- * (`context_length`, `capabilities`, …). Unknown fields are ignored.
- *
- * @returns the row, or `undefined` when it cannot be offered honestly
+ * Accepts the OpenAI `/models` shape and a richer shape (should a deployment
+ * publish `context_length` / `capabilities`). Unknown fields are ignored.
  */
 export function normalizeModelRow(
 	raw: unknown,
@@ -108,10 +129,16 @@ export function normalizeModelRow(
 	};
 }
 
-/** Normalize a list, preserving wire order and dropping duplicate ids. */
+/**
+ * Normalize a list, preserving wire order and dropping duplicate ids.
+ *
+ * @param filterNonChat drop ids the heuristic identifies as non-chat (default
+ *   `true`; diagnostics can pass `false` to see the whole gateway list)
+ */
 export function chatModelsOf(
 	rows: unknown,
 	defaults: ModelDefaults = DEFAULT_MODEL_DEFAULTS,
+	filterNonChat = true,
 ): OfficeAceModelRow[] {
 	if (!Array.isArray(rows)) return [];
 	const seen = new Set<string>();
@@ -119,6 +146,7 @@ export function chatModelsOf(
 	for (const raw of rows) {
 		const row = normalizeModelRow(raw, defaults);
 		if (row === undefined || seen.has(row.id)) continue;
+		if (filterNonChat && !isLikelyChatModel(row.id)) continue;
 		seen.add(row.id);
 		out.push(row);
 	}
@@ -151,8 +179,8 @@ export function catalogEntriesOf(
 /**
  * Build one pi-ai model descriptor.
  *
- * `cost` is all zeros on purpose: OfficeAce bills no published per-token price
- * we could verify, and inventing one would surface a fake number in DSH.
+ * `cost` is all zeros on purpose: the gateway publishes no per-token price we
+ * could verify, and inventing one would surface a fake number in DSH.
  */
 export function toPiModel(
 	row: OfficeAceModelRow,

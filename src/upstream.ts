@@ -1,129 +1,133 @@
 /**
- * The upstream: an OpenAI-compatible chat-completions endpoint.
+ * The upstream: OfficeAce's model gateway, OpenAI-compatible.
  *
- * What is VERIFIED (see docs/protocol.md §3):
+ * What is VERIFIED end-to-end against a signed-in OfficeAce 1.8.1 account
+ * (docs/protocol.md §2):
  *
- * - OfficeAce's own API server talks OpenAI-compatible chat completions:
- *   `POST {base}/chat/completions` with `Authorization` set, as seen in the
- *   shipped `@openjiuwen/relay-api-server` bundle; its `relayclaw` client is
- *   only allowed to use `authType: "api_key"` + `protocol: "openai"` profiles.
- * - `https://api.office-claw.com` is the production API host in the shipped
- *   `.env` (`OFFICE_CLAW_API_HOST`), and `https://officeace.chat.huaweicloud-agentarts.com`
- *   is the user-profile endpoint.
- * - The local API server exposes `GET /api/maas-models` for the model list.
+ * - base: `https://<modelInfo.model_api_url_base>/v1`
+ * - `GET  /v1/models`            200, `{object:"list", data:[{id, object, created, owned_by}]}`
+ * - `POST /v1/chat/completions`  200, SSE with `delta.reasoning_content`,
+ *   `delta.tool_calls`, a usage chunk and `data: [DONE]`
+ * - auth: HTTP Basic `<model_app_key>:<model_app_secret>`
  *
- * What is INFERRED:
+ * `model_app_key` / `model_app_secret` and the host come from the account's
+ * provider state, not from a constant. An explicit API key (settings or
+ * `DSH_OFFICEACE_API_KEY`) switches the transport to bearer instead.
  *
- * - That the public API base for model calls is `https://api.office-claw.com/v1`
- *   and that a public `GET /models` exists there too. Both are configurable
- *   (`baseUrl` setting) precisely because this was not exercised end to end.
- *
- * This module is transport only: no retries, no token caching, no logging of
- * the credential.
+ * This module is transport only: no retries, no caches beyond the resolver's,
+ * and no logging of the credential.
  */
 
 import { OfficeAceError, isAbortError, safeMessage } from "./errors.js";
-import { resolveCredential } from "./credentials.js";
-
-/** Production API base — inferred `/v1` suffix; override via settings. */
-export const DEFAULT_BASE_URL = "https://api.office-claw.com/v1";
+import type { ResolvedAccess } from "./credentials.js";
 
 export interface UpstreamOptions {
-	/** Live settings getters. */
-	getBaseUrl?: () => string;
-	getApiKey?: () => string;
+	/** Resolves auth + base per call (cached by `AccessResolver`). */
+	access: () => Promise<ResolvedAccess>;
 	/** Per-request timeout for non-stream calls. */
 	timeoutMs?: number;
 	/** Injectable for tests; defaults to the global fetch. */
 	fetchImpl?: typeof fetch;
 }
 
-function trimSlashes(value: string): string {
-	return value.trim().replace(/\/+$/, "");
+/** Build the Authorization header value for a resolved access. */
+export function authorizationOf(access: ResolvedAccess): string {
+	if (access.auth.kind === "bearer") return `Bearer ${access.auth.token}`;
+	return `Basic ${Buffer.from(`${access.auth.appKey}:${access.auth.appSecret}`, "utf8").toString("base64")}`;
 }
 
 /** Map an HTTP failure onto the plugin's error kinds. */
-export function classifyFailure(
-	httpStatus: number,
-	message: string,
-): OfficeAceError {
+export function classifyFailure(httpStatus: number, message: string): OfficeAceError {
 	if (httpStatus === 401 || httpStatus === 403) {
 		return new OfficeAceError(
-			"OfficeAce 上游拒绝了当前 API Key（401/403），请检查 Key 或 baseUrl。",
+			"OfficeAce 模型网关拒绝了当前凭据（401/403），请重新在 OfficeAce 桌面端登录，或检查设置的 API Key。",
 			"session_dead",
 			{ httpStatus },
 		);
 	}
 	if (httpStatus === 429) {
-		return new OfficeAceError("OfficeAce 上游限流，请稍后重试", "rate_limited", { httpStatus });
+		return new OfficeAceError("OfficeAce 模型网关限流，请稍后重试", "rate_limited", { httpStatus });
 	}
 	if (httpStatus >= 500) {
-		return new OfficeAceError(`OfficeAce 上游服务错误：HTTP ${httpStatus}`, "upstream", {
-			httpStatus,
-		});
+		return new OfficeAceError(`OfficeAce 模型网关错误：HTTP ${httpStatus}`, "upstream", { httpStatus });
 	}
 	if (httpStatus >= 400) {
 		const detail = message.trim();
 		return new OfficeAceError(
-			`OfficeAce 上游拒绝请求：HTTP ${httpStatus}${detail === "" ? "" : ` ${detail}`}`.slice(0, 240),
+			`OfficeAce 模型网关拒绝请求：HTTP ${httpStatus}${detail === "" ? "" : ` ${detail}`}`.slice(0, 240),
 			"client",
 			{ httpStatus },
 		);
 	}
-	return new OfficeAceError(`OfficeAce 上游调用失败：HTTP ${httpStatus}`, "upstream", { httpStatus });
+	return new OfficeAceError(`OfficeAce 模型网关调用失败：HTTP ${httpStatus}`, "upstream", { httpStatus });
+}
+
+/** Pull a human-usable message out of an OpenAI/APIG error body. */
+export function errorMessageOf(raw: string): string {
+	try {
+		const parsed = JSON.parse(raw) as {
+			error?: { message?: unknown };
+			error_msg?: unknown;
+			message?: unknown;
+		};
+		const candidate = parsed.error?.message ?? parsed.error_msg ?? parsed.message;
+		if (typeof candidate === "string") return candidate.slice(0, 200);
+	} catch {
+		// not JSON — fall through to the raw slice
+	}
+	return raw.slice(0, 200);
 }
 
 export class OfficeAceUpstream {
-	private readonly getBaseUrl: () => string;
-	private readonly getApiKey: () => string;
+	private readonly access: () => Promise<ResolvedAccess>;
 	private readonly timeoutMs: number;
 	private readonly fetchImpl: typeof fetch;
 
-	constructor(options: UpstreamOptions = {}) {
-		this.getBaseUrl = options.getBaseUrl ?? (() => "");
-		this.getApiKey = options.getApiKey ?? (() => "");
+	constructor(options: UpstreamOptions) {
+		this.access = options.access;
 		this.timeoutMs = options.timeoutMs ?? 30_000;
 		this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
 	}
 
-	/** The effective base for the current settings, without a trailing slash. */
-	baseUrl(): string {
-		const override = trimSlashes(String(this.getBaseUrl() ?? ""));
-		return override !== "" ? override : DEFAULT_BASE_URL;
+	/** The effective `/v1` base (no trailing slash). Throws without a credential. */
+	async baseUrl(): Promise<string> {
+		const access = await this.access();
+		if (access.baseUrl === "") {
+			throw new OfficeAceError(
+				"无法确定模型网关地址：本机 OfficeAce 登录态不可读，且没有设置 baseUrl。",
+				"not_signed_in",
+			);
+		}
+		return access.baseUrl.replace(/\/+$/u, "");
 	}
 
-	/** The credential, resolved per call so a card edit takes effect at once. */
-	apiKey(): string {
-		const direct = String(this.getApiKey() ?? "").trim();
-		if (direct !== "") return direct;
-		return resolveCredential({}).apiKey;
-	}
-
-	/** Request headers. NEVER logged. */
-	headers(stream = false): Record<string, string> {
+	/** Headers for one request. NEVER logged. */
+	async headers(stream = false): Promise<Record<string, string>> {
+		const access = await this.access();
 		return {
 			Accept: stream ? "text/event-stream" : "application/json",
-			Authorization: `Bearer ${this.apiKey()}`,
+			Authorization: authorizationOf(access),
 		};
 	}
 
-	/** The model catalog, as `data[]` of whatever shape the endpoint returns. */
+	/** The model catalog: `data[]` (ids only — no context lengths, verified). */
 	async listModels(signal?: AbortSignal): Promise<unknown[]> {
+		const base = await this.baseUrl();
 		let response: Response;
 		try {
-			response = await this.fetchImpl(`${this.baseUrl()}/models`, {
-				headers: this.headers(),
+			response = await this.fetchImpl(`${base}/models`, {
+				headers: await this.headers(),
 				signal: signal ?? AbortSignal.timeout(this.timeoutMs),
 			});
 		} catch (error) {
 			if (isAbortError(error)) throw error;
-			throw new OfficeAceError(`无法连接 OfficeAce 上游：${safeMessage(error)}`, "network", {
+			throw new OfficeAceError(`无法连接 OfficeAce 模型网关：${safeMessage(error)}`, "network", {
 				cause: error,
 			});
 		}
 		if (!response.ok) {
 			const text = await response.text().catch(() => "");
-			throw classifyFailure(response.status, text.slice(0, 200));
+			throw classifyFailure(response.status, errorMessageOf(text));
 		}
 		let body: unknown;
 		try {
@@ -145,26 +149,25 @@ export class OfficeAceUpstream {
 	 * the shim forwards it after replacing only the credential.
 	 */
 	async chatCompletion(body: unknown, options: { signal?: AbortSignal } = {}): Promise<Response> {
+		const base = await this.baseUrl();
+		const headers = await this.headers((body as { stream?: unknown })?.stream === true);
 		let response: Response;
 		try {
-			response = await this.fetchImpl(`${this.baseUrl()}/chat/completions`, {
+			response = await this.fetchImpl(`${base}/chat/completions`, {
 				method: "POST",
-				headers: {
-					...this.headers((body as { stream?: unknown })?.stream === true),
-					"Content-Type": "application/json",
-				},
+				headers: { ...headers, "Content-Type": "application/json" },
 				body: JSON.stringify(body ?? {}),
 				signal: options.signal,
 			});
 		} catch (error) {
 			if (isAbortError(error)) throw error;
-			throw new OfficeAceError(`无法连接 OfficeAce 上游：${safeMessage(error)}`, "network", {
+			throw new OfficeAceError(`无法连接 OfficeAce 模型网关：${safeMessage(error)}`, "network", {
 				cause: error,
 			});
 		}
 		if (!response.ok) {
 			const text = await response.text().catch(() => "");
-			throw classifyFailure(response.status, text.slice(0, 200));
+			throw classifyFailure(response.status, errorMessageOf(text));
 		}
 		return response;
 	}

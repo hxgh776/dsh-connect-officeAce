@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.2.0 — 2026-11-16
+
+补上 0.1.0 里被错误归为「证据不足」的两块：本机登录态复用与模型网关地址。**这两条推翻 0.1.0 的结论：不是证据不足，是当时没去读。**
+
+### 新增
+
+- `src/wincred.ts`：`CredRead`（经短命 PowerShell 子进程）读 `wincred://OfficeAce/auth-sessions/.../provider-state`，解析 manifest（UTF-16LE JSON，`chunkCount`/`storageId`），按序拼接 `.../chunks/<storageId>/<n>`，base64 解码成 provider-state JSON。只读、不落盘、不进日志/路由/错误消息。
+- `AccessResolver`：凭据来源扩为 `settings | env | local-session`，显式设置仍优先，本机登录态兜底；解析结果缓存 60 秒，设置变更即失效。Bearer（显式 Key）与 Basic（app-key 对）两种鉴权自动切换。
+- `baseUrl` 默认值改为从 `providerState.modelInfo.model_api_url_base` 推导的 `https://<host>/v1`，并标【实测】。
+- 目录过滤：`/v1/models` 混有图像/视频/embedding/rerank 模型，按 id 启发式剔除（`isLikelyChatModel`）。
+- `VERIFIED_WORKING_MODEL_IDS` / `DEFAULT_PROBE_MODEL`：`deepseek-v4-flash` 是实测能返回 200 的模型。
+- 测试 67 条（新增 wincred 解码、AccessResolver 优先级/缓存、Basic 鉴权、聊天模型过滤）。
+
+### 实测结论（详见 docs/protocol.md）
+
+- 网关鉴权是 **HTTP Basic `<model_app_key>:<model_app_secret>`**；Bearer / X-Auth-Token / AppCode / SDK-HMAC-Access 全部 401 `APIG.0303`。
+- 路径是 **`/v1/models` 与 `/v1/chat/completions`**；`/models`、`/inference/v1/chat/completions`、`/` 均 404。
+- 流式响应含 `delta.reasoning_content`、`delta.tool_calls`、usage chunk、`data: [DONE]`，即原生 OpenAI 兼容。
+- OfficeAce 配置里的 `deepseek-v4.1-flash` 在本机账号上 **404 not available**；`deepseek-v4-flash` 可用。配置默认模型 ≠ 账号可用模型。
+
+### 移除/修正
+
+- 删除 `DEFAULT_BASE_URL = https://api.office-claw.com/v1`（那是应用 API，不是模型网关，属 0.1.0 的推断错误）。
+- README/协议里「本机登录态不可读」「复用本机登录 ❌」的说法全部删除并改写。
+
+### 已知限制
+
+- 本次 agent 运行在 Windows 沙箱，Node spawn 管道子进程被拒（`spawn EPERM`），因此 `probe` 的端到端那一次用 `DSH_OFFICEACE_PROVIDER_STATE_FILE` 注入已解码状态；wincred 的 PowerShell 程序与 Node 解码器都单独验证过（见 protocol §6）。
+- 上下文窗口仍是假设值（`/v1/models` 不返回）。
+
 ## 0.1.0 — 2026-11-16
 
 首个版本。**定位是「骨架 + 已核实事实」，不是端到端可用的成品。**

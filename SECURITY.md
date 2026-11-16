@@ -4,10 +4,16 @@
 
 ## 不变量
 
-1. **不代登录、不复制 token。** 插件只读 OfficeAce 本地状态库里的账号记录与会话元数据；token 本体在 Windows 凭据管理器（`wincred://OfficeAce/...`），本插件不读取。
-2. **模型凭据只在内存与请求头里。** API Key 来自设置文件或 `DSH_OFFICEACE_API_KEY`；它不会进入日志、错误消息、web 路由响应或 loopback shim 的响应体。
+1. **不代登录、不复制 token 到磁盘。** 插件用 `CredRead` 只读 OfficeAce 在 Windows 凭据管理器里的 provider-state（manifest + 分块），在进程内存里拼接解码；不调用 `CredWrite`/`CredDelete`，不把解码结果写进任何文件。
+2. **模型凭据只在内存与请求头里。** 来源是显式设置 / 环境变量 / 本机登录态；app-key、STS token、refresh token 不会进入日志、错误消息、web 路由响应或 loopback shim 响应体。
 3. **完整账号 id 不出现在任何视图里。** `<orgId>:<userId>` 在 status/doctor 中脱敏为 `43808e…:ce736e…`。
 4. **仓库不含真实数据。** 无凭据、无账号、无余额、无截图；`docs/protocol.md` 只描述形状，值已脱敏。
+
+## 凭据读取的额外说明
+
+- 读取靠一个短命的 `powershell.exe`（`-NoProfile -NonInteractive -EncodedCommand`），权限与当前用户相同；脚本内容只含凭据 target（含账号哈希），不含任何密钥。
+- 子进程只 `CredRead`，不改动凭据库；stdout 只传回 manifest 与分块的原始文本，由 Node 侧解码。
+- `DSH_OFFICEACE_PROVIDER_STATE_FILE` 是离线诊断入口，指向的文件是**明文凭据**，仅用于沙箱/CI 验证，不应长期存在。
 
 ## 攻击面
 

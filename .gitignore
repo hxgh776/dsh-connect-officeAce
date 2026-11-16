@@ -3,6 +3,7 @@ lib/
 out-test/
 .npm-cache/
 .refs/
+.evidence/
 *.tgz
 *.log
 

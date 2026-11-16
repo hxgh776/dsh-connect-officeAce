@@ -34,6 +34,21 @@ ExperimentalWarning: SQLite is an experimental feature and might change at any t
 
 这是 Node 的提示，不是插件问题。CI 里同样会出现。
 
+## 凭据解析与 wincred
+
+凭据来源顺序：设置 `apiKey` → 环境 `DSH_OFFICEACE_API_KEY` → 本机 OfficeAce 登录态。
+
+本机登录态这条链路是：本地 sqlite 的 session 记录拿 `providerStateRef` → 去掉 `wincred://` 得凭据 target → PowerShell 里 `CredRead` 读 manifest 与分块 → 拼接 base64 → 解码 JSON → 取 `modelInfo.model_api_url_base` 与 `model_auth_info` 的 app-key 对。`CredRead` 自己完成 DPAPI 解密，不需要原生模块。
+
+读凭据要 spawn 一个 `powershell.exe`。**DSH 宿主进程或普通终端可以；受限沙箱会拒绝管道子进程（`spawn EPERM`）**，此时 `doctor` 报 `powerShell_blocked`。若要在受限环境里验证下游链路，可注入一份已解码的 provider state：
+
+```powershell
+$env:DSH_OFFICEACE_PROVIDER_STATE_FILE = 'C:\path\to\provider-state.json'
+node lib/cli-probe.js --tools
+```
+
+该变量只是离线诊断入口，不是生产凭据来源——那个文件里是明文 token，用完立刻删。
+
 ## 对着真实安装调试
 
 ```powershell
@@ -41,12 +56,9 @@ $env:DSH_OFFICEACE_APP_ROOT = 'C:\Users\<user>\AppData\Local\Programs\OfficeAce'
 node lib/cli-doctor.js --json
 ```
 
-`doctor` 的五项检查里，`credential` 在未配置 Key 时必然是 FAIL —— OfficeAce 的登录 token 在 Windows 凭据管理器，插件读不到（见 `docs/protocol.md` §1.3）。这不是可以「修绿」的项，除非实现凭据读取。
-
-要验证上游，填一个可用的 Key：
+`doctor` 的五项检查里，`credential` 会尝试解析本机登录态；解析失败时它会给出失败原因（例如沙箱里的 `powerShell_blocked`），这是真实状态，不是可以「修绿」的 bug。要验证上游：
 
 ```powershell
-$env:DSH_OFFICEACE_API_KEY = '<key>'
 node lib/cli-probe.js --tools
 ```
 

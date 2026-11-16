@@ -3,9 +3,11 @@ import test from "node:test";
 import {
 	DEFAULT_MODEL_DEFAULTS,
 	KNOWN_MODEL_IDS,
+	VERIFIED_WORKING_MODEL_IDS,
 	catalogEntriesOf,
 	chatModelsOf,
 	enabledModelsOf,
+	isLikelyChatModel,
 	normalizeModelRow,
 	toPiModel,
 } from "./catalog.js";
@@ -85,6 +87,42 @@ test("toPiModel builds a descriptor DSH can accept", () => {
 	assert.deepEqual(model.cost, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
 });
 
-test("KNOWN_MODEL_IDS are the two ids verified in OfficeAce's own agent config", () => {
-	assert.deepEqual(KNOWN_MODEL_IDS, ["deepseek-v4.1-flash", "deepseek-v4.1-flash-1017"]);
+test("KNOWN_MODEL_IDS are the ids verified in OfficeAce's own agent config", () => {
+	assert.deepEqual(KNOWN_MODEL_IDS, ["deepseek-v4.1-flash", "deepseek-v4.1-flash-1017-host"]);
+});
+
+test("VERIFIED_WORKING_MODEL_IDS records the id a real completion answered for", () => {
+	assert.deepEqual(VERIFIED_WORKING_MODEL_IDS, ["deepseek-v4-flash"]);
+});
+
+test("the chat heuristic drops the live catalog's non-chat ids", () => {
+	const ids = [
+		"deepseek-v4-flash",
+		"glm-5.3",
+		"qwen3-32b",
+		"vidu/viduq3-pro_text2video",
+		"pixverse/pixverse-v6-t2v",
+		"qwen-image-edit-2509",
+		"qwen_image_edit",
+		"bge-m3",
+		"bge-reranker-v2-m3",
+	];
+	const kept = ids.filter(isLikelyChatModel);
+	assert.deepEqual(kept, ["deepseek-v4-flash", "glm-5.3", "qwen3-32b"]);
+});
+
+test("chatModelsOf filters non-chat ids by default and can return the raw list", () => {
+	const rows = [
+		{ id: "deepseek-v4-flash" },
+		{ id: "bge-m3" },
+		{ id: "pixverse/pixverse-v6-t2v" },
+	];
+	assert.deepEqual(
+		chatModelsOf(rows).map((row) => row.id),
+		["deepseek-v4-flash"],
+	);
+	assert.deepEqual(
+		chatModelsOf(rows, DEFAULT_MODEL_DEFAULTS, false).map((row) => row.id),
+		["deepseek-v4-flash", "bge-m3", "pixverse/pixverse-v6-t2v"],
+	);
 });

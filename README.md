@@ -1,47 +1,45 @@
 # DSH Connect OfficeAce
 
-把本机安装并登录的 [OfficeAce](https://www.office-claw.com)（华为云）桌面端接入 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness)：OfficeAce 的模型出现在 DSH 模型选择器，OpenAI 兼容请求经进程内 loopback shim 转发到上游，`bash` / `read` / `write` / `edit` 等工具仍由 DSH 本地执行。
+把本机安装并登录的 [OfficeAce](https://www.office-claw.com)（华为云）桌面端接入 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness)：OfficeAce 的模型出现在 DSH 模型选择器，OpenAI 兼容请求经进程内 loopback shim 转发到模型网关，`bash` / `read` / `write` / `edit` 等工具仍由 DSH 本地执行。
 
 架构与工程约定参照 `dsh-connect-trae`（远端）与 `dsh-connect-loomy`（本机）。
 
-> **先读这一条：这个仓库目前是「骨架 + 已核实事实」，不是端到端可用的成品。**
-> DSH 侧的机制（provider 注册、loopback shim、pi-ai 适配、设置页、路由）是从两个参考实现里搬来的成熟做法；
-> OfficeAce 侧的**登录态复用**和**用量看板**没有做成，因为证据不足，而不是没来得及写。
-> 逐条依据与缺口见 [docs/protocol.md](docs/protocol.md)，下面的「完成度」表是它的摘要。
+**不用填 Key。** 插件从本机 OfficeAce 的登录态里读出模型网关地址与凭据：`CredRead` 读 Windows 凭据管理器里的 provider-state（manifest + 6 个分块），拼接后 base64 解码得到 JSON，取 `modelInfo.model_api_url_base` 与 `model_api_auth_info` 的 app-key 对，`/v1/chat/completions` 用 HTTP Basic 调用。只读、不落盘、不进日志、不进 web 路由响应。
+
+逐条依据见 [docs/protocol.md](docs/protocol.md)（【实测】/【参考】/【推断】）。
 
 ## 完成度
 
 | 能力 | 状态 | 依据 |
 |---|---|---|
-| DSH provider 注册 / 模型选择器 | ✅ 已实现 | 参考实现（两个参考仓库同款机制） |
-| loopback shim（随机端口 + 进程内 secret + 流式透传） | ✅ 已实现，有测试 | 参考实现 |
-| pi-ai 适配 + 跨版本 context 折叠 | ✅ 已实现 | 参考 `dsh-connect-loomy` / `dsh-connect-trae` |
-| 读取本机 OfficeAce 登录记录（只读诊断） | ✅ 已实现，真机跑通 | **实测**：`data/storage.sqlite` 的 `oc_kv_string` |
-| 上游 OpenAI 兼容对话 | ⚠️ 已实现，**未端到端验证** | 端点推断，需 API Key |
-| 复用 OfficeAce 本机登录态（免 Key） | ❌ 未实现 | token 在 Windows 凭据管理器，需 DPAPI/原生 API |
-| 用量 / 积分看板 | ❌ 未实现 | 未找到可验证的查询接口 |
-| 每日签到、模型管理、多区域面板 | ❌ 不在范围 | 无证据，不臆造 |
-
-`✅` 的部分有真实测试覆盖（50 条，见下文）；`⚠️` 的部分有代码但缺一次真实上游调用；`❌` 的部分只进文档，不进代码。
+| DSH provider 注册 / 模型选择器 | ✅ 已实现 | 参考实现 |
+| loopback shim（随机端口 + 进程内 secret + 流式透传） | ✅ 有测试 | 参考实现 |
+| pi-ai 适配 + 跨版本 context 折叠 | ✅ 已实现 | 参考实现 |
+| 复用本机 OfficeAce 登录态（免 Key） | ✅ 已实现；真机解出网关与凭据 | **实测**：wincred manifest/chunks → base64 → JSON |
+| 模型网关地址与鉴权 | ✅ 实测 | `https://<model_api_url_base>/v1` + Basic app-key |
+| 对话：SSE / reasoning / tool_calls / usage | ✅ 实测 200 + 流式增量 | 见 protocol §3 |
+| 上游端到端 `probe` | ✅ 真跑通（`deepseek-v4-flash`） | 见下方验证 |
+| 用量 / 积分看板 | ❌ 未实现 | 没有可验证的查询接口 |
+| 每日签到、模型管理 UI、多区域面板 | ❌ 不在范围 | 无证据，不臆造 |
 
 ## 前提
 
 - 先安装并登录 OfficeAce 桌面端（插件不做登录，也绝不代登录）。
-- Windows x64。插件读取 OfficeAce 安装目录下的本地状态库；其它平台没有这个布局。
-- **模型访问凭据需要单独提供**：OfficeAce 把 oauth token 放在 Windows 凭据管理器（`wincred://OfficeAce/...`），本插件没有实现读取，所以在 DSH 设置里填 API Key，或用环境变量 `DSH_OFFICEACE_API_KEY`。
+- Windows x64。插件读取安装目录下的本地状态库与当前用户的 Windows 凭据管理器。
+- 运行插件的进程要能启动一个短命的 PowerShell 子进程（`CredRead` 的传输通道）。DSH 宿主进程满足；受限沙箱可能不满足（见「已知限制」）。
 
 ## 工作方式
 
 ```
 DSH pi-ai provider (openai-completions)
   → 进程内 loopback shim（127.0.0.1 随机端口 + 进程内随机 secret）
-    → OfficeAce OpenAI 兼容上游（默认 https://api.office-claw.com/v1，可覆盖）
+    → https://<modelInfo.model_api_url_base>/v1/chat/completions（HTTP Basic app-key）
 ```
 
-- **本机状态**：只读打开 `%LOCALAPPDATA%\Programs\OfficeAce\data\storage.sqlite`，读两条记录——当前登录账号与本地 API 服务租约。不写入、不迁移、不复制 token。
-- **凭据**：来自本插件自己的设置文件或 `DSH_OFFICEACE_API_KEY`；不写日志、不进 web 路由响应、不落进 loopback shim 的响应。
-- **模型目录**：从上游 `/models` 发现并缓存到 `~/.dsh/dsh-connect-officeace.catalog.json`；上游不可达时回落缓存，不提供内置假目录（原因见 protocol §4）。
-- **隔离**：只读写 `dsh-connect-officeace` 自己的设置命名空间与 `~/.dsh/dsh-connect-officeace.*.json`，不与其它插件共享账号、凭据、目录或开关。
+- **登录态**：只读 `%LOCALAPPDATA%\Programs\OfficeAce\data\storage.sqlite` 找到当前账号的 `providerStateRef`，再只读 Windows 凭据管理器里的 manifest + 分块；解码出的网关地址与 app-key 只在进程内存里。
+- **凭据来源**（`AccessResolver`，按顺序）：显式设置 `apiKey` → `DSH_OFFICEACE_API_KEY` → 本机登录态（`local-session`）。显式 Key 走 Bearer，本机登录态走 Basic。
+- **模型目录**：`GET /v1/models` 发现并缓存到 `~/.dsh/dsh-connect-officeace.catalog.json`；上游不可达时回落缓存。目录里混有图像/视频/embedding/rerank 模型，按 id 启发式过滤（见 protocol §4）。
+- **隔离**：只读写自己的设置命名空间与 `~/.dsh/dsh-connect-officeace.*.json`，不与其它插件共享账号、凭据、目录或开关。
 
 ## 安装
 
@@ -53,17 +51,17 @@ dsh plugin --profile desktop add <仓库路径>
 
 ## 设置
 
-设置 → OfficeAce：
+设置 → OfficeAce。登录正常时全部留空即可。
 
 | 字段 | 说明 |
 |---|---|
-| `apiKey` | 上游 API Key（也可用 `DSH_OFFICEACE_API_KEY`）。 |
-| `baseUrl` | 上游地址覆盖；留空用 `https://api.office-claw.com/v1`（推断值）。 |
-| `installRoot` | OfficeAce 安装根目录；留空自动探测。 |
 | `enabledModelIds` | 勾选的模型 id；留空=展示全部，显式空数组=一个都不选。 |
-| `defaultContextWindow` | `/models` 未给上下文长度时使用的值（推断值，默认 200000）。 |
+| `apiKey` | 可选。填写后改用 Bearer，覆盖本机登录态。 |
+| `baseUrl` | 可选。留空用本机解析出的 `https://<model_api_url_base>/v1`；仅在网关地址异常时覆盖。 |
+| `installRoot` | 可选。OfficeAce 安装根目录；留空自动探测。 |
+| `defaultContextWindow` | `/models` 不返回上下文长度时的默认值（推断值，默认 200000）。 |
 
-设置页同时展示只读状态：本机是否登录、账号（脱敏）、过期时间、token 实际存放位置、目录来源、凭据来源。
+状态卡还展示：本机是否登录、账号（脱敏）、过期时间、凭据来源（settings/env/local-session）、网关 baseUrl、目录来源。
 
 ## CLI 诊断
 
@@ -73,27 +71,34 @@ node lib/cli-probe.js [-p <prompt>] [-m <model>] [--tools] [--json] [--no-stream
 node lib/bin.js doctor | probe
 ```
 
-- `doctor`：五项检查（安装/本地库可读/登录记录/凭据/上游），**不消耗推理额度**；退出码 0/1/2。
-- `probe`：真实流式对话一次，会消耗额度；退出码 2/3/4/5/1/0。
+- `doctor`：五项只读检查（安装 / 本地库 / 登录记录 / 凭据解析 / 网关），`--network` 才探测 `/v1/models`；**不消耗推理额度**；退出码 0/1/2。
+- `probe`：真实流式对话一次（会消耗额度）；退出码 0/2/3/4/5/1。
 
-真机 `doctor` 输出（2026-11-16，本机 OfficeAce 1.8.1）：
+真机 `doctor --network`（2026-11-16，OfficeAce 1.8.1）：
 
 ```
 OK   install      找到 OfficeAce 本地状态库 data/storage.sqlite
 OK   local-store  本地状态库可读（只读打开）
-OK   session      已登录（provider=huawei-oauth，expiresAt=…）
-FAIL credential   未配置上游 API Key。OfficeAce 的登录 token 存放在 Windows 凭据管理器（wincred://）中…
-OK   upstream     跳过（加 --network 探测上游 /models）
+OK   session      已登录（provider=huawei-oauth，expiresAt=2026-11-16T15:12:35.397Z）
+OK   credential   访问凭据已解析（来源：local-session，baseUrl：https://modelgw-0006.…/v1）
+OK   upstream     模型网关 /v1/models 可用（38 个模型）
 ```
 
-`credential` 那一行 FAIL 是**真实状态**，不是 bug。
+真机 `probe --tools --json`：`ok:true`，`model:"deepseek-v4-flash"`，`status:200`，usage 含 `reasoning_tokens:107`。
+
+## 已知限制
+
+- **受限沙箱里 Node 不能 spawn 子进程**（`spawn EPERM`）。此时凭据无法解析，`doctor` 会明确报 `powerShell_blocked`；可用 `DSH_OFFICEACE_PROVIDER_STATE_FILE=<已解码的 provider-state.json>` 做离线诊断（仅测试用，文件含凭据，用完即删）。DSH 宿主进程/普通终端不受此限制。
+- 上下文窗口仍是假设值（见 protocol §4）。
+- 上游可用模型因账号而异：OfficeAce 配置里的 `deepseek-v4.1-flash` 在本机账号上返回 404，实测可用的是 `deepseek-v4-flash`。
 
 ## 隐私
 
-- 只读 OfficeAce 的本地状态库；不复制、不写回、不密封 token。
-- 账号 id `<orgId>:<userId>` 在一切视图里脱敏成 `43808e…:ce736e…`；完整 id 不进日志、不进路由响应。
-- web 路由先过宿主 Connection 的 `requestRejection`，再叠加 loopback Host/Origin + `sec-fetch-site` 门禁；写路由额外要求 `x-dsh-officeace-write` 头（CSRF）。
-- 仓库不含任何凭据、账号、余额或截图；`docs/protocol.md` 里的值都是形状，不是本机实际值。
+- 只读 OfficeAce 的本地状态库与当前用户的 Windows 凭据管理器；不写回、不复制到磁盘、不密封。
+- app-key、STS token、refresh token 等**只存在于进程内存**；不进日志、不进错误消息、不进 web 路由响应、不进 loopback shim 响应。
+- 账号 id `<orgId>:<userId>` 在所有视图里脱敏为 `43808e…:ce736e…`。
+- web 路由先过宿主 Connection 的 `requestRejection`，再叠 loopback Host/Origin + `sec-fetch-site` 门禁；写路由额外要求 `x-dsh-officeace-write` 头。
+- 仓库不含任何凭据、账号、余额或截图。
 
 ## 开发
 
@@ -103,11 +108,7 @@ npm run check     # typecheck + test + build
 npm run doctor
 ```
 
-测试：`tsc -p tsconfig.test.json && node scripts/test.mjs`（50 条，单进程跑，见 DEVELOPMENT.md 说明）。
-
-## 依据
-
-所有 OfficeAce 侧关键结论都标了证据等级（实测 / 参考实现 / 推断），见 [docs/protocol.md](docs/protocol.md)。
+测试：`tsc -p tsconfig.test.json && node scripts/test.mjs`（67 条，单进程跑，原因见 DEVELOPMENT.md）。
 
 ## License
 

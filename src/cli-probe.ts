@@ -1,20 +1,20 @@
 /**
- * `dsh-connect-officeace probe` — one real streaming chat through the upstream.
+ * `dsh-connect-officeace probe` — one real streaming chat through the gateway.
  *
- * Deliberately separate from `doctor`: this DOES consume whatever quota the
- * account has, so it is opt-in and prints the model it used. It exercises the
- * same OpenAI-compatible surface the shim forwards, including a tool-call round
- * when `--tools` is passed.
+ * Separate from `doctor` on purpose: this consumes quota. It exercises the same
+ * OpenAI-compatible surface the shim forwards, including tool calls when
+ * `--tools` is passed. Credential resolution is the production one (explicit
+ * key/env first, otherwise the account's own provider state).
  *
  * Exit codes: 0 success, 2 bad usage, 3 credential missing/rejected, 4 network,
  * 5 upstream error, 1 unexpected.
  */
 
-import { credentialState } from "./credentials.js";
-import { MISSING_CREDENTIAL_MESSAGE } from "./credentials.js";
-import { KNOWN_MODEL_IDS } from "./catalog.js";
+import { DEFAULT_PROBE_MODEL, VERIFIED_WORKING_MODEL_IDS } from "./catalog.js";
+import { AccessResolver } from "./credentials.js";
 import { OfficeAceError } from "./errors.js";
-import { readStoredSettings } from "./store.js";
+import { readLocalState } from "./local-store.js";
+import { withStoredSettings } from "./store.js";
 import { OfficeAceUpstream } from "./upstream.js";
 
 interface ProbeOptions {
@@ -84,6 +84,7 @@ const TOOLS = [
 interface ProbeOutcome {
 	ok: boolean;
 	model: string;
+	baseUrl: string;
 	text: string;
 	reasoning: string;
 	toolCalls: Array<{ name?: string; arguments?: string }>;
@@ -92,14 +93,9 @@ interface ProbeOutcome {
 	error?: string;
 }
 
-function decodeChunk(value: Uint8Array): string {
-	return new TextDecoder().decode(value);
-}
-
 function parseSseBlock(block: string): Record<string, unknown> | undefined {
-	const lines = block.split(/\r?\n/u);
 	const data: string[] = [];
-	for (const line of lines) {
+	for (const line of block.split(/\r?\n/u)) {
 		if (line.startsWith("data:")) data.push(line.slice(5).trim());
 	}
 	const payload = data.join("\n").trim();
@@ -111,25 +107,22 @@ function parseSseBlock(block: string): Record<string, unknown> | undefined {
 	}
 }
 
-async function readStream(
-	response: Response,
-	outcome: ProbeOutcome,
-	print: boolean,
-): Promise<void> {
+async function readStream(response: Response, outcome: ProbeOutcome, print: boolean): Promise<void> {
 	const reader = response.body?.getReader();
 	if (reader === undefined) return;
+	const decoder = new TextDecoder();
 	let buffer = "";
 	for (;;) {
 		const { done, value } = await reader.read();
 		if (done) break;
-		buffer += decodeChunk(value as Uint8Array);
+		buffer += decoder.decode(value as Uint8Array, { stream: true });
 		const blocks = buffer.split(/\r?\n\r?\n/u);
 		buffer = blocks.pop() ?? "";
 		for (const block of blocks) {
 			const event = parseSseBlock(block);
 			if (event === undefined) continue;
-			const choices = Array.isArray((event as { choices?: unknown }).choices)
-				? ((event as { choices: unknown[] }).choices as Array<Record<string, unknown>>)
+			const choices = Array.isArray(event.choices)
+				? (event.choices as Array<Record<string, unknown>>)
 				: [];
 			for (const choice of choices) {
 				const delta = (choice.delta ?? {}) as Record<string, unknown>;
@@ -153,44 +146,45 @@ async function readStream(
 					}
 				}
 			}
-			if ((event as { usage?: unknown }).usage !== undefined) {
-				outcome.usage = (event as { usage: unknown }).usage;
-			}
+			if (event.usage !== undefined) outcome.usage = event.usage;
 		}
 	}
 }
 
 async function runProbe(options: ProbeOptions): Promise<{ code: number; outcome: ProbeOutcome }> {
-	const stored = readStoredSettings();
-	const credential = credentialState({ apiKey: stored.apiKey });
+	const settings = withStoredSettings({ baseUrl: options.baseUrl });
+	const access = new AccessResolver({
+		settings: () => settings,
+		readLocalState: () => readLocalState({ installRoot: settings.installRoot }),
+	});
+	const upstream = new OfficeAceUpstream({ access: () => access.resolve() });
+
 	const outcome: ProbeOutcome = {
 		ok: false,
 		model: options.model,
+		baseUrl: "",
 		text: "",
 		reasoning: "",
 		toolCalls: [],
 		usage: undefined,
 		status: 0,
 	};
-	if (!credential.configured) {
-		return {
-			code: 3,
-			outcome: { ...outcome, error: MISSING_CREDENTIAL_MESSAGE },
-		};
-	}
 
-	const upstream = new OfficeAceUpstream({
-		getBaseUrl: () => options.baseUrl || stored.baseUrl || "",
-		getApiKey: () => stored.apiKey ?? "",
-	});
+	try {
+		outcome.baseUrl = await upstream.baseUrl();
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return { code: error instanceof OfficeAceError ? 3 : 1, outcome: { ...outcome, error: message } };
+	}
 
 	let model = options.model;
 	if (model === "") {
 		try {
 			const rows = (await upstream.listModels()) as Array<{ id?: unknown }>;
-			model = typeof rows[0]?.id === "string" ? rows[0].id : KNOWN_MODEL_IDS[0];
+			const ids = rows.map((row) => row.id).filter((id): id is string => typeof id === "string");
+			model = ids.find((id) => VERIFIED_WORKING_MODEL_IDS.includes(id)) ?? ids[0] ?? DEFAULT_PROBE_MODEL;
 		} catch {
-			model = KNOWN_MODEL_IDS[0];
+			model = DEFAULT_PROBE_MODEL;
 		}
 	}
 	outcome.model = model;
@@ -210,7 +204,7 @@ async function runProbe(options: ProbeOptions): Promise<{ code: number; outcome:
 		outcome.status = response.status;
 		if (options.stream) {
 			await readStream(response, outcome, options.json !== true);
-			process.stdout.write("\n");
+			if (options.json !== true) process.stdout.write("\n");
 		} else {
 			const payload = (await response.json()) as Record<string, unknown>;
 			const choices = Array.isArray(payload.choices)
@@ -236,7 +230,12 @@ async function runProbe(options: ProbeOptions): Promise<{ code: number; outcome:
 	} catch (error) {
 		if (error instanceof OfficeAceError) {
 			outcome.error = error.message;
-			const code = error.kind === "not_signed_in" || error.kind === "session_dead" ? 3 : error.kind === "network" ? 4 : 5;
+			const code =
+				error.kind === "not_signed_in" || error.kind === "session_dead"
+					? 3
+					: error.kind === "network"
+						? 4
+						: 5;
 			return { code, outcome };
 		}
 		outcome.error = error instanceof Error ? error.message : String(error);
@@ -257,7 +256,8 @@ async function main(): Promise<number> {
 	else if (!outcome.ok) console.error(`probe 失败：${outcome.error ?? "unknown"}`);
 	else {
 		const toolNote = outcome.toolCalls.length > 0 ? `，tool_calls=${outcome.toolCalls.length}` : "";
-		console.error(`probe 成功：model=${outcome.model}${toolNote}`);
+		const reasoningNote = outcome.reasoning.length > 0 ? "，reasoning 有增量" : "";
+		console.error(`probe 成功：model=${outcome.model}${toolNote}${reasoningNote}`);
 	}
 	return code;
 }

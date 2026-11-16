@@ -6,17 +6,19 @@
  * 1. the OfficeAce installation and its local store are where we expect;
  * 2. the store opens and answers a query;
  * 3. a session record exists and is not expired;
- * 4. a model credential is configured (settings or environment);
- * 5. optionally, the upstream `/models` answers (`--network`).
+ * 4. access resolves — explicit key/env, or the account's own provider state
+ *    from Windows Credential Manager (this is the one that used to be "fill a
+ *    key in");
+ * 5. optionally, the model gateway's `/v1/models` answers (`--network`).
  *
  * Exit codes: 0 all good, 1 at least one check failed, 2 bad usage.
  */
 
-import { credentialState } from "./credentials.js";
+import { AccessResolver } from "./credentials.js";
 import { readLocalState, resolveDatabasePath } from "./local-store.js";
 import { isSessionExpired } from "./session.js";
+import { withStoredSettings } from "./store.js";
 import type { OfficeAceSessionRecord } from "./types.js";
-import { readStoredSettings } from "./store.js";
 import { OfficeAceUpstream } from "./upstream.js";
 
 interface CheckResult {
@@ -97,21 +99,22 @@ async function run(options: DoctorOptions): Promise<{ checks: CheckResult[]; ok:
 
 	checks.push(sessionCheck(local.session, now));
 
-	const stored = readStoredSettings();
-	const credential = credentialState({ apiKey: stored.apiKey });
+	const settings = withStoredSettings({ installRoot: options.installRoot, baseUrl: options.baseUrl });
+	const access = new AccessResolver({
+		settings: () => settings,
+		readLocalState: () => readLocalState({ installRoot: options.installRoot }),
+	});
+	const credential = await access.status();
 	checks.push({
 		id: "credential",
 		ok: credential.configured,
 		detail: credential.configured
-			? `模型凭据已配置（来源：${credential.source}）`
-			: (credential.message ?? "未配置模型凭据"),
+			? `访问凭据已解析（来源：${credential.source}，baseUrl：${credential.baseUrl ?? "未解析"}）`
+			: (credential.message ?? "未解析到可用凭据"),
 	});
 
 	if (options.network) {
-		const upstream = new OfficeAceUpstream({
-			getBaseUrl: () => options.baseUrl || stored.baseUrl || "",
-			getApiKey: () => stored.apiKey ?? "",
-		});
+		const upstream = new OfficeAceUpstream({ access: () => access.resolve() });
 		try {
 			const rows = await upstream.listModels();
 			checks.push({
@@ -119,18 +122,18 @@ async function run(options: DoctorOptions): Promise<{ checks: CheckResult[]; ok:
 				ok: rows.length > 0,
 				detail:
 					rows.length > 0
-						? `上游 /models 可用（${rows.length} 个模型）`
-						: "上游 /models 返回空目录",
+						? `模型网关 /v1/models 可用（${rows.length} 个模型）`
+						: "模型网关 /v1/models 返回空目录",
 			});
 		} catch (error) {
 			checks.push({
 				id: "upstream",
 				ok: false,
-				detail: `上游 /models 失败：${error instanceof Error ? error.message : String(error)}`,
+				detail: `模型网关 /v1/models 失败：${error instanceof Error ? error.message : String(error)}`,
 			});
 		}
 	} else {
-		checks.push({ id: "upstream", ok: true, detail: "跳过（加 --network 探测上游 /models）" });
+		checks.push({ id: "upstream", ok: true, detail: "跳过（加 --network 探测模型网关 /v1/models）" });
 	}
 
 	return { checks, ok: checks.every((check) => check.ok) };
@@ -146,7 +149,9 @@ function printHuman(checks: CheckResult[]): void {
 async function main(): Promise<number> {
 	const options = parseArgs(process.argv.slice(2));
 	if (options === undefined) {
-		console.error("用法: dsh-connect-officeace doctor [--json] [--network] [--install-root <dir>] [--base-url <url>]");
+		console.error(
+			"用法: dsh-connect-officeace doctor [--json] [--network] [--install-root <dir>] [--base-url <url>]",
+		);
 		return 2;
 	}
 	const { checks, ok } = await run(options);

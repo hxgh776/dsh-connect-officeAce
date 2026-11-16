@@ -29,10 +29,11 @@ import {
 	KNOWN_MODEL_IDS,
 	OFFICEACE_PROVIDER,
 	OFFICEACE_PROVIDER_DISPLAY_NAME,
+	VERIFIED_WORKING_MODEL_IDS,
 	catalogEntriesOf,
 	enabledModelsOf,
 } from "./catalog.js";
-import { credentialState, tokenLocationOf } from "./credentials.js";
+import { AccessResolver, tokenLocationOf } from "./credentials.js";
 import { createDiscovery } from "./discovery.js";
 import { readLocalState } from "./local-store.js";
 import { CATALOG_PATH, SAVE_PATH, STATUS_PATH, WRITE_HEADER, registerRoutes } from "./routes.js";
@@ -46,16 +47,25 @@ import {
 	withStoredSettings,
 	writeStoredSetting,
 } from "./store.js";
-import { DEFAULT_BASE_URL, OfficeAceUpstream } from "./upstream.js";
+import { OfficeAceUpstream } from "./upstream.js";
 
-export { OFFICEACE_PROVIDER, OFFICEACE_PROVIDER_DISPLAY_NAME, KNOWN_MODEL_IDS } from "./catalog.js";
+export { OFFICEACE_PROVIDER, OFFICEACE_PROVIDER_DISPLAY_NAME, KNOWN_MODEL_IDS, VERIFIED_WORKING_MODEL_IDS } from "./catalog.js";
 export { createAdapter } from "./adapter.js";
-export { credentialState, MISSING_CREDENTIAL_MESSAGE } from "./credentials.js";
+export { AccessResolver, MISSING_CREDENTIAL_MESSAGE, tokenLocationOf } from "./credentials.js";
 export { createDiscovery } from "./discovery.js";
 export { readLocalState, resolveDatabasePath } from "./local-store.js";
 export { CATALOG_PATH, SAVE_PATH, STATUS_PATH, WRITE_HEADER, registerRoutes } from "./routes.js";
 export { createShim } from "./shim.js";
 export { sessionViewOf, isSessionExpired, parseSessionRecord } from "./session.js";
+export {
+	createLocalSessionReader,
+	decodeProviderStateText,
+	modelGatewayOf,
+	parseManifest,
+	parseProviderState,
+	wincredTargetOf,
+} from "./wincred.js";
+export { authorizationOf, classifyFailure } from "./upstream.js";
 export {
 	DEFAULT_SETTINGS,
 	WRITABLE_FIELDS,
@@ -63,11 +73,11 @@ export {
 	withStoredSettings,
 	writeStoredSetting,
 } from "./store.js";
-export { DEFAULT_BASE_URL, OfficeAceUpstream } from "./upstream.js";
+export { OfficeAceUpstream } from "./upstream.js";
 
 const PLUGIN_ID = "dsh-connect-officeace";
 const PLUGIN_NAME = "DSH Connect OfficeAce";
-export const VERSION = "0.1.0";
+export const VERSION = "0.2.0";
 
 /**
  * The plugin's Cordis name — the Loader and the Settings service key on it.
@@ -129,10 +139,10 @@ const Config = z.object({
 		"在 DSH 模型选择器中启用的 OfficeAce 模型 id 列表。留空表示未配置，展示全部（已在设置页保存为空数组时除外）。",
 	),
 	apiKey: asVolatile(z.string().default("")).description(
-		"OfficeAce 上游 API Key。OfficeAce 自己的登录 token 在 Windows 凭据管理器里，本插件读不到，因此模型访问凭据需要在这里填写（或设置环境变量 DSH_OFFICEACE_API_KEY）。",
+		"可选。默认不需要：插件会从本机 OfficeAce 登录态读出模型网关地址与 app-key 凭据（只读、不落盘）。填写后改用该 Key 作为 Bearer 凭据，覆盖本机登录态。",
 	),
 	baseUrl: asVolatile(z.string().default("")).description(
-		`OfficeAce OpenAI 兼容上游地址覆盖。留空使用内置推断值 ${DEFAULT_BASE_URL}（该地址未做过端到端实测，见 docs/protocol.md）。`,
+		"可选。留空时使用从本机 OfficeAce 登录态解析出的模型网关地址（实测 https://<modelInfo.model_api_url_base>/v1）。仅在需要指向别的网关时填写。",
 	),
 	installRoot: asVolatile(z.string().default("")).description(
 		"OfficeAce 安装根目录（其 data/storage.sqlite 为本地状态库）。留空自动探测 %LOCALAPPDATA%\\Programs\\OfficeAce。",
@@ -157,13 +167,15 @@ function effectiveIds(config: Partial<ResolvedSettings> | undefined): string[] |
 }
 
 /** The status snapshot shared by the route and the doctor. */
-function statusViewOf(
+async function statusViewOf(
 	current: ResolvedSettings,
 	discovery: { describe: () => unknown },
 	upstream: OfficeAceUpstream,
 	local: ReturnType<typeof readLocalState>,
-): Record<string, unknown> {
+	access: AccessResolver,
+): Promise<Record<string, unknown>> {
 	const session = local.session;
+	const credential = await access.status();
 	return {
 		ok: true,
 		plugin: PLUGIN_ID,
@@ -179,18 +191,20 @@ function statusViewOf(
 			appVersion: local.lease?.appVersion ?? null,
 			apiPort: local.lease?.apiPort ?? null,
 		},
-		tokenLocation: tokenLocationOf(session),
-		credential: credentialState(current),
+		tokenLocation: tokenLocationOf(session?.providerStateRef),
+		credential,
 		catalog: discovery.describe(),
-		baseUrl: upstream.baseUrl(),
+		baseUrl: credential.baseUrl ?? null,
 		knownModelIds: KNOWN_MODEL_IDS,
+		verifiedModelIds: VERIFIED_WORKING_MODEL_IDS,
 		capabilities: {
 			chatCompletions: true,
 			toolCallsPassThrough: true,
+			streamingReasoning: true,
 			usageBoard: false,
 			usageBoardReason: "OfficeAce 没有可验证的用量/积分查询接口，本插件不实现（docs/protocol.md §5）",
-			reuseLocalLogin: false,
-			reuseLocalLoginReason: "OfficeAce 登录 token 在 Windows 凭据管理器（wincred://OfficeAce/...），需 DPAPI/原生 API，本插件未实现读取",
+			reuseLocalLogin: true,
+			reuseLocalLoginSource: credential.source,
 		},
 	};
 }
@@ -212,10 +226,11 @@ function apply(ctx: any, config: Partial<ResolvedSettings> = {}): void {
 
 	let current: ResolvedSettings = withStoredSettings(config);
 
-	const upstream = new OfficeAceUpstream({
-		getBaseUrl: () => current.baseUrl,
-		getApiKey: () => current.apiKey,
+	const access = new AccessResolver({
+		settings: () => current,
+		readLocalState: () => readLocalState({ installRoot: current.installRoot }),
 	});
+	const upstream = new OfficeAceUpstream({ access: () => access.resolve() });
 	const modelDefaults = () => ({
 		contextWindow: current.defaultContextWindow,
 		maxTokens: DEFAULT_MAX_OUTPUT_TOKENS,
@@ -347,7 +362,7 @@ function apply(ctx: any, config: Partial<ResolvedSettings> = {}): void {
 			try {
 				const disposeRoutes = registerRoutes(webCtx, {
 					statusView: () =>
-						statusViewOf(current, discovery, upstream, readLocalState({ installRoot: current.installRoot })),
+						statusViewOf(current, discovery, upstream, readLocalState({ installRoot: current.installRoot }), access),
 					catalogView: async () => {
 						await discovery.refresh().catch(() => {});
 						return {
@@ -381,6 +396,7 @@ function apply(ctx: any, config: Partial<ResolvedSettings> = {}): void {
 							return;
 						}
 						current = next;
+						access.invalidate();
 						notifyAdapters();
 					},
 				});

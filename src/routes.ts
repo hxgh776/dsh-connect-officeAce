@@ -40,8 +40,8 @@ export interface WebServerLike {
 }
 
 export interface RouteDeps {
-	/** Synchronous, allow-listed diagnostics snapshot. */
-	statusView: () => unknown;
+	/** Allow-listed diagnostics snapshot (may read the local credential cache). */
+	statusView: () => unknown | Promise<unknown>;
 	/** Async allow-listed catalog view. */
 	catalogView: () => Promise<unknown>;
 	/** Force a discovery refresh. */
@@ -198,14 +198,14 @@ export function registerRoutes(ctx: unknown, deps: RouteDeps): () => void {
 		webServer.register({
 			kind: "exact",
 			path: STATUS_PATH,
-			handler: (req, res) => {
+			handler: async (req, res) => {
 				if (req.method !== "GET") {
 					json(res, 405, { error: "method not allowed" });
 					return;
 				}
 				if (!guard(ctx, req, res)) return;
 				try {
-					json(res, 200, deps.statusView());
+					json(res, 200, await deps.statusView());
 				} catch (error) {
 					json(res, 500, { ok: false, error: safeMessage(error) });
 				}

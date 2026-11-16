@@ -4,7 +4,7 @@
 
 证据分三级，正文里逐条标注：
 
-- **【实测】** — 2026-11-16 在装有 OfficeAce 1.8.1 的本机（Windows x64）上直接读取到的：注册表项、安装目录文件、`data/storage.sqlite` 的表与记录、随包 `.env` 与 `office-claw-config.json`、随包 JS bundle 里的字符串。
+- **【实测】** — 2026-11-16 在装有 OfficeAce 1.8.1 的本机（Windows x64）上直接读到或调用到的：注册表项、安装目录文件、`data/storage.sqlite`、Windows 凭据管理器里的 provider state、以及对模型网关的真实 HTTP 调用。
 - **【参考】** — 来自两个参考实现的已验证做法：本机 `/d/software/dsh-plugin/dsh-connect-loomy`，以及 `dingminhua/dsh-connect-trae`（main，tarball 提交树 `7788c45`）。这类证据只对 **DSH 侧机制**成立，**不构成 OfficeAce 上游事实**。
 - **【推断】** — 没有直接证据。凡是对外行为有影响的推断，都做成了可配置项或明确不实现，不在代码里伪装成事实。
 
@@ -23,11 +23,9 @@ Publisher       : Huawei Cloud
 InstallLocation : C:\Users\<user>\AppData\Local\Programs\OfficeAce
 ```
 
-安装根目录下可见 `OfficeAce.exe`、`OfficeAceServiceHost.exe`、`resources/app.asar`、`data/`、`packages/`、`office-claw-config.json`、`.env`。
-
 ### 1.2 本地状态库【实测】
 
-`<安装根>\data\storage.sqlite` 是 Redis 形状的键值库（`oc_kv_string` / `oc_kv_hash` / `oc_kv_set` / `oc_kv_zset` / `oc_kv_keys`），另有 `oc_draft_*` 草稿表。本插件只读 `oc_kv_string`。
+`<安装根>\data\storage.sqlite` 是 Redis 形状的键值库（`oc_kv_string` / `oc_kv_hash` / `oc_kv_set` / `oc_kv_zset` / `oc_kv_keys`）。本插件只读 `oc_kv_string`。
 
 登录记录（键前缀 `office-claw:oc:session:user:`），真实形状（值已脱敏）：
 
@@ -39,119 +37,156 @@ InstallLocation : C:\Users\<user>\AppData\Local\Programs\OfficeAce
  "providerStateRef":"wincred://OfficeAce/auth-sessions/huawei-oauth/<org>:<user>/provider-state"}
 ```
 
-本地 API 服务租约（键 `office-claw:runtime:api-instance-lease:v1`）：
+本地 API 服务租约（键 `office-claw:runtime:api-instance-lease:v1`）含 `token` / `apiPort` / `pid` / `appVersion` 等字段。插件只据此判断「本机是否登录」「是否过期」「桌面端是否在跑」。
 
-```json
-{"version":1,"token":"<uuid>","instanceId":"api-<uuid>","pid":<n>,
- "hostname":"<host>","apiPort":3004,"appVersion":"1.8.1",
- "startedAt":<ms>,"acquiredAt":<ms>,"supervisorPid":<n>,"supervisorId":"<hex>"}
-```
+### 1.3 登录态在 Windows 凭据管理器里，而且可读【实测】
 
-插件据此判断「本机是否登录」「登录是否过期」「桌面端是否在跑」，**不读取 token 本身**。
-
-### 1.3 token 到底在哪【实测 + 未实现】
-
-`providerStateRef` 是 `wincred://OfficeAce/auth-sessions/...` —— Windows 凭据管理器。同一安装目录下另有：
-
-- `packages/api/.config/secure-config-nodejs/oauth-<org>%3A<user>.json`：`{version, alg:"aes-256-gcm", iv, tag, data}`；
-- `packages/api/.config/secure-config-nodejs/.oauth-profile-encryption-key`：以 `OC-DPAPI-1` 开头、DPAPI 包裹的密钥；
-
-APIs 还依赖 `@napi-rs/keyring` / `cross-keychain`。结论：**登录 token 需要 DPAPI/原生凭据 API 才能取出，本插件没有实现**。这是「复用本机登录」没做成的直接原因，不是遗漏。
-
-## 2. 上游地址
-
-### 2.1 随包 `.env`【实测】
+`providerStateRef` 去掉 `wincred://` 就是凭据管理器里的 target：
 
 ```
-OFFICE_CLAW_API_HOST            = https://api.office-claw.com
-OFFICE_CLAW_API_URL             = http://localhost:3004        # 本地 API 服务
-NEXT_PUBLIC_PROD_API_URL        = office-claw.com
-NEXT_PUBLIC_PROD_FRONTEND_HOST  = app.office-claw.com
-OFFICE_ACE_USER_PROFILE_ENDPOINT= https://officeace.chat.huaweicloud-agentarts.com
-OFFICE_CLAW_SKIP_AUTH           = 0
+OfficeAce/auth-sessions/huawei-oauth/<orgId>%3A<userId>/provider-state
 ```
 
-### 2.2 模型访问方式【实测（bundle 字符串）+ 推断（公开基址）】
+本机实测（`CredEnumerate` + `CredRead`，LegacyGeneric）共 7 条：
 
-随包 `packages/api/dist/index.js`（`@openjiuwen/relay-api-server`）里：
+- manifest 凭据：上面那个 target，186 字节，UTF-16LE 编码的 JSON
+  `{"schemaVersion":2,"encoding":"base64","storageId":"<12 hex>","chunkCount":6}`
+- 分块凭据：`<target>/chunks/<storageId>/<0..5>`，每块 UTF-16LE 文本（约 1000 个 base64 字符，末块 956）
 
-- provider profile 校验：`client "relayclaw" ("jiuwen") requires an API key provider profile`，且 `protocol === "openai"`；
-- 调用形态：`POST ${baseUrl}/chat/completions`，头 `Authorization`；
-- 本地路由：`/api/maas-models`（MaaS 模型清单），`Authorization: Bearer …` 或 `x-office-claw-session`；
-- `effectiveProtocol === "huawei_maas"` 分支存在，说明 OfficeAce 的模型来自华为 MaaS。
+**解码链路**：把 6 个分块按序号拼接成一段 base64 → 解码 → UTF-8 JSON（本机 4465 字节）。`CredRead` 自己完成了 DPAPI 解密，插件既不碰 DPAPI、也不编译原生模块。
 
-**【推断】** 公开的 OpenAI 兼容基址是 `https://api.office-claw.com/v1`，其上存在 `GET /models`。**没有做过一次真实调用**，所以它是 `baseUrl` 的默认值而不是硬编码事实。
+解码后的结构（键名实测，值已删）：
 
-### 2.3 本地 API 服务未打通【实测】
+```
+schemaVersion: 1
+providerState:
+  authType: "huawei-oauth"
+  accountId / user_id: <32 hex>
+  userName: <display name>
+  modelInfo:
+    model_api_url_base: "modelgw-0006.officeace.cn-southwest-2.huaweicloud-agentarts.com"
+    model_auth_info:
+      model_app_key: <32 hex>
+      model_app_secret: <32 hex>
+  credential:    { access, secret, sts_token, project_id, expires_at, refresh_token, refresh_expires_at }
+  credentialV3:  { access, secret, sts_token, project_id, expires_at }
+  dpop:          { privateJwk, publicJwk }   ← 该账号同时持有 DPoP 密钥对
+  traceInfo:     { appTraceToken, apmApiUrlBase }
+  cloudServices: { activatedServices, ocr, … }
+```
 
-`api-instance-lease` 显示服务在 `127.0.0.1:3004` 上运行，`Test-NetConnection` 显示端口开放；但用 `curl -v` 直接请求 `/api/maas-models`、`/`、`/healthz` 均得到 *Empty reply from server*（带 `x-office-claw-session` 或 `Authorization` 亦然），Windows 侧 `Invoke-WebRequest` 同样被重置。
+`dpop` 的存在只作记录：模型网关鉴权没有用到它（见 §2）。
 
-**结论：本插件不依赖本地 API 服务。** 依赖它会把插件的可用性绑在一个当前无法验证的通道上；记录在这里，供后续排查。
+## 2. 模型网关：地址、鉴权、路径【实测】
 
-## 3. 对话协议
+### 2.1 地址
 
-**【参考】** DSH 侧链路（pi-ai → loopback shim → 上游）来自 `dsh-connect-loomy` 的实测：OpenAI 兼容 SSE、`delta.reasoning_content`、`delta.tool_calls`、usage chunk、`data: [DONE]`，以及「`baseUrl` 必须带 `/v1`，因为 pi-ai 会原样追加 `/chat/completions`」。
+`modelInfo.model_api_url_base` 是**主机名（无 scheme）**，实测为
+`modelgw-0006.officeace.cn-southwest-2.huaweicloud-agentarts.com`（AWS 中国宁夏区，解析到华为云 APIG）。模型 API 基址为 `https://<该主机>/v1`。
 
-**【实测】** OfficeAce 侧只核到：路径 `/chat/completions`、`Authorization` 鉴权、`protocol: "openai"`。**没有核到**它实际返回的 SSE 字段。
+### 2.2 鉴权
 
-因此本插件的承诺只有一条：**OpenAI 兼容字节透传**。`reasoning_content` / `tool_calls` 若有则原样穿过（测试覆盖了透传路径），但插件不声称 OfficeAce 一定产出它们。这一条在 `README.md` 的能力表里标的是「已实现，未端到端验证」。
+对同一路径试过多组候选，只有一组通过：
 
-## 4. 模型目录与上下文窗口
+| 尝试 | 结果 |
+|---|---|
+| `Authorization: Bearer <credential.access>` | 401 `APIG.0303` |
+| `Authorization: Bearer <sts_token>`（v2 / v3） | 401 `APIG.0303` |
+| `X-Auth-Token: <sts_token>` | 401 `APIG.0303` |
+| `X-Apig-Appcode: <model_app_key>` | 401 `APIG.0303` |
+| `Authorization: SDK-HMAC-SHA256 Access=<model_app_key>` | 401 `APIG.0303` |
+| **`Authorization: Basic base64(<model_app_key>:<model_app_secret>)`** | **200** |
 
-**【实测】** `office-claw-config.json` 里各 agent 的默认模型：
+所以：**网关用 app-key 对做 HTTP Basic**，不是 IAM/STS 签名，也不是 AppCode。`credential.access/secret/sts_token` 与 `credentialV3.*` 存在但本插件不用于模型调用。
 
-- `office` / `assistant` / `agentteams`：`defaultModel = "deepseek-v4.1-flash"`，`providerProfileId = "huawei-maas"`；
-- `agentteam`：`defaultModel = "deepseek-v4.1-flash-1017"`。
+### 2.3 路径
 
-这两个 id 是**唯一能核实**的模型；代码里作为 `KNOWN_MODEL_IDS` 仅用于诊断，不冒充可选的完整目录。
+| 请求 | 结果 |
+|---|---|
+| `GET  /` | 404 `APIG.0101`（未发布） |
+| `GET  /v1/models` | 200，`{"object":"list","data":[…]}` |
+| `GET  /models` | 404 `APIG.0101` |
+| `POST /v1/chat/completions` | 200（`deepseek-v4-flash`） |
+| `POST /inference/v1/chat/completions` | 404 |
 
-**【推断】** `/models` 的响应结构未知，尤其**没有证据表明它返回上下文长度**。DSH 会因为某个模型缺 `contextWindow` 而整体拒绝 provider（`INVALID_MODEL_CONTEXT`），所以：
+即：**`/v1/models` + `/v1/chat/completions` 是实测可用路径**。网关会在错误里回显它内部路由到的 `/inference/v1/chat/completions`，那是实现细节，不是对外路径。
 
-- 若响应带 `context_length` / `context_window` / `contextWindow` → 用之；
+### 2.4 模型可用性
+
+`GET /v1/models` 实测返回 38 条，字段只有 `id` / `object` / `created` / `owned_by`，**没有上下文长度、没有能力标记**，且混着 chat / 图像 / 视频 / embedding / rerank 模型。
+
+两个值得记的实测结果：
+
+- `deepseek-v4.1-flash`（OfficeAce 自己 agent 配置里的 defaultModel）→ **404** `ModelArts.81016 The model … is not available with api url /inference/v1/chat/completions`
+- `deepseek-v4-flash` → **200**，正常返回
+
+所以「配置里的默认模型」不等于「当前账号可用的模型」。插件把 `deepseek-v4-flash` 记为 `VERIFIED_WORKING_MODEL_IDS`，`probe` 优先用它。
+
+## 3. 对话协议【实测】
+
+`POST /v1/chat/completions`，`stream: true`，`stream_options:{include_usage:true}`：
+
+- 响应 `text/event-stream; charset=utf-8`；
+- `delta.reasoning_content` 有增量（实测一次回复 80 个 reasoning chunk）；
+- `delta.content` 正文增量；
+- 带 `tools` 时 `delta.tool_calls` 有增量（实测 1 个 tool-call chunk）；
+- 末尾有 usage chunk（`prompt_tokens` / `completion_tokens` / `completion_tokens_details.reasoning_tokens`）；
+- 终止符 `data: [DONE]`。
+
+结论：OfficeAce 网关是**原生 OpenAI 兼容**，工具调用与思考链都走标准字段，shim 不需要协议转换。这一条从 0.2.0 起是实测，不再是「只承诺字节透传」。
+
+## 4. 上下文窗口【推断】
+
+`/v1/models` 不返回上下文长度（实测字段只有 `id/object/created/owned_by`），而 DSH 会因为任何一个模型缺 `contextWindow` 而拒绝整个 provider（`INVALID_MODEL_CONTEXT`）。所以：
+
+- 响应里带 `context_length` / `context_window` / `contextWindow` → 用之；
 - 否则用 `defaultContextWindow`，默认 200000，**可在设置里改**。
 
-这是本仓库最大的一个「为了能跑而做的假设」，明确写在 schema 描述与 README 里。`maxTokens` 同理，默认 32000。
+默认值仍是**假设**，不是实测；`maxTokens` 同理（默认 32000）。这是本仓库唯一保留的「为了能跑而做的推断」，已写在 README 与 schema 描述里。
 
 ## 5. 明确没做的（不要算完成）
 
 | 能力 | 为什么不做 |
 |---|---|
-| 复用本机登录态（免 API Key） | token 在 Windows 凭据管理器 + DPAPI 包裹的加密密钥；纯 Node 读不到，做成半吊子会假装成功。 |
-| 用量 / 积分 / 余额看板 | 没有找到可验证的 OfficeAce 用量接口。参考实现里的积分接口是 Loomy 与 Trae 各自的，不能套用。 |
-| 每日签到 / 领取 | 同上，且属于写操作，臆造接口风险更高。 |
-| 模型管理 UI、多区域 provider、账号池 | 参考实现的这些能力建立在各自已知的区域与端点之上；OfficeAce 侧无对应证据。 |
-| 端到端对话验证 | 缺一个可用的上游凭据；`probe` 已写好，填 Key 即可验证。 |
+| 用量 / 积分 / 余额看板 | 没有找到可验证的 OfficeAce 用量接口。`credential` / `credentialV3` 里只有 STS 凭据与过期时间，没有任何余额或流水字段；参考实现的积分接口是 Loomy / Trae 各自的，不能套用。 |
+| 每日签到 / 领取 | 同上，且属于写操作。 |
+| 模型管理 UI、多区域 provider、账号池 | 参考实现的这些能力建立在各自已知的区域与端点之上；OfficeAce 侧只确认了一个网关主机。 |
+| DPoP / IAM 签名通道 | 账号里有 `dpop.privateJwk` 与 STS 凭据，但模型网关只吃 Basic app-key；没有证据表明模型调用需要它们。 |
 
 ## 6. 可复现的验证
 
 本机实际执行（非声明）：
 
 ```
-$ npm run typecheck
-> tsc -p tsconfig.json
-（exit 0）
+$ npm run check
+typecheck → exit 0
+tests     → 67 / 67 pass
+build     → exit 0
 
-$ npm test
-> tsc -p tsconfig.test.json && node scripts/test.mjs
-ℹ tests 50
-ℹ pass 50
-ℹ fail 0
-
-$ npm run build
-> tsc -p tsconfig.build.json
-（exit 0）
-
-$ node lib/cli-doctor.js
+$ node lib/cli-doctor.js --network      # 凭据由本机登录态解析
 OK   install      找到 OfficeAce 本地状态库 data/storage.sqlite
 OK   local-store  本地状态库可读（只读打开）
 OK   session      已登录（provider=huawei-oauth，expiresAt=2026-11-16T15:12:35.397Z）
-FAIL credential   未配置上游 API Key。OfficeAce 的登录 token 存放在 Windows 凭据管理器…
-OK   upstream     跳过（加 --network 探测上游 /models）
-（exit 1 —— credential 是真实缺口）
+OK   credential   访问凭据已解析（来源：local-session，baseUrl：https://modelgw-0006.…/v1）
+OK   upstream     模型网关 /v1/models 可用（38 个模型）
+exit 0
+
+$ node lib/cli-probe.js --tools --json
+{"ok":true,"model":"deepseek-v4-flash",
+ "baseUrl":"https://modelgw-0006.….huaweicloud-agentarts.com/v1",
+ "status":200,
+ "usage":{"prompt_tokens":288,"completion_tokens":124,
+          "completion_tokens_details":{"reasoning_tokens":107}}}
+exit 0
 ```
 
-测试覆盖的是可离线判定的部分：路径推导、sqlite 只读解析、会话过期/脱敏、目录归一化、设置文件原子写、凭据优先级、上游错误分类、shim 鉴权与 SSE 透传、路由门禁与 CSRF。
-**不覆盖**：真实 OfficeAce 上游的任何一次调用（没有凭据）。
+关于 wincred 通道的验证边界（如实记录）：
+
+- 交付的 PowerShell 读取程序（`buildReadScript` 产出的那段）在本机 PowerShell 里**真跑通过**：manifest → 6 个分块 → 拼出 base64 → 解码出 4465 字节 JSON，字段与 §1.3 一致。
+- Node 侧解码器用**同一次真实抓取的 envelope** 验证通过（`DECODE_OK`，host / appKey / expiresAt 都对得上）。
+- 但本次 agent 运行在 Windows 沙箱里，**Node 不允许 spawn 带管道 stdio 的子进程**（`spawn EPERM`）。所以 `probe` 的端到端那一次，凭据走的是 `DSH_OFFICEACE_PROVIDER_STATE_FILE` 注入已解码的 provider state（文件仅存在于 `.evidence/`，跑完即删）。**wincred → Node 的默认链路在沙箱内无法执行，在 DSH 宿主进程/普通终端里不受此限制。**
+
+测试覆盖：路径推导、sqlite 只读解析、会话过期/脱敏、凭据优先级与缓存、wincred manifest/分块解码、目录归一化与非 chat 过滤、设置原子写、上游错误分类、shim 鉴权与 SSE 透传、路由门禁与 CSRF。
 
 ## 7. 参考实现清单（用于核对）
 
