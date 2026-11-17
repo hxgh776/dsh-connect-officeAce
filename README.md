@@ -53,22 +53,36 @@ dsh plugin --profile desktop add <仓库路径>
 
 ## 设置面板
 
-DSH 的设置页不会自动生成：`registerConfigurableProviders` 只把 provider 放进模型列表，左侧导航里的「设置 → OfficeAce」由插件自己的浏览器脚本注册 `settings.section` slot。
+DSH 的设置页不会自动生成：`registerConfigurableProviders` 只把 provider 放进模型列表，左侧导航里的「设置 → 果办」由插件自己的浏览器脚本注册 `settings.section` slot。
 
 - 源码是手写的 `src/client.js`（CommonJS-shaped 普通脚本：`window.__ModuleLoader__.load({ id, factory })`，顶部不能出现 `import`，否则整个 web boot 会挂）。
-- 构建时由 `scripts/copy-client.mjs` 复制到 `lib/client.js`（`lib/` 是 gitignore 的产物目录，所以这一步不能省）。
+- 构建时由 `scripts/copy-client.mjs` 复制到 `lib/client.js`（仓库已提交 `lib/`，所以 git 安装无需构建；本地改完源码后仍需 `npm run build`）。
 - 面板内容只走三条已存在的路由：`status`（登录状态、脱敏账号、到期时间、凭据来源、网关 baseUrl）、`catalog`（模型清单）、`__save`（只写 `enabledModelIds`）。**没有任何把凭据送到浏览器的字段。**
 - `npm run verify:client` 做静态校验：CJS 形态、`require` 白名单、导出集合、`inject = ["slots","locale"]`、`settings.section` 注册、`package.json` 的 `exports["./client"]` 与 `dsh.client`、产物一致性。
 
-改完源码后要重新构建并重新 `dsh plugin --profile desktop add file:<仓库路径>`（`file:` 是拷贝，不是链接），再重启 DSH 桌面端。
+从 GitHub 安装（换机器时推荐）：
+
+```sh
+dsh plugin --profile desktop add github:hxgh776/dsh-connect-officeAce
+```
+
+⚠️ `dsh plugin add` 对 git 依赖**不会**自动把插件写进 profile 的 `dsh.profile.bundles`（`file:` / `link:` 会）。装完如果 `dsh --profile <名称> --dump-config` 里看不到 `dsh-connect-officeace`，请手动把它加到该 profile 的 `dsh.profile.bundles`，否则 DSH 会报 `NO_ADAPTER: no adapter registered for provider "officeace"`。
+
+本地开发用 `link:` 更省事（改源码即时生效，无需重装）：
+
+```sh
+dsh plugin --profile desktop add link:D:/software/dsh-plugin/dsh-connect-officeace
+```
+
+仓库已提交 `lib/` 构建产物，所以 git 安装不需要再跑构建。
 
 ## 设置
 
-设置 → OfficeAce。登录正常时全部留空即可。
+设置 → 果办。登录正常时全部留空即可。
 
 | 字段 | 说明 |
 |---|---|
-| `enabledModelIds` | 勾选的模型 id；留空=展示全部，显式空数组=一个都不选。 |
+| `enabledModelIds` | 勾选的模型 id；留空=只展示本机实测可用的那几条，显式空数组=一个都不选。 |
 | `apiKey` | 可选。填写后改用 Bearer，覆盖本机登录态。 |
 | `baseUrl` | 可选。留空用本机解析出的 `https://<model_api_url_base>/v1`；仅在网关地址异常时覆盖。 |
 | `installRoot` | 可选。OfficeAce 安装根目录；留空自动探测。 |
@@ -122,7 +136,7 @@ npm run doctor
 npm run e2e       # 端到端：本机登录 → 凭据 → 网关 → shim → 对话/流式/工具调用
 ```
 
-测试：`tsc -p tsconfig.test.json && node scripts/test.mjs`（67 条，单进程跑，原因见 DEVELOPMENT.md）。
+测试：`tsc -p tsconfig.test.json && node scripts/test.mjs`（69 条，单进程跑，原因见 DEVELOPMENT.md）。
 
 `npm run e2e` 打真实网关、会消耗少量额度（单次跑下来不到 1000 token），只在已登录 OfficeAce 的机器上跑；它不使用 `DSH_OFFICEACE_PROVIDER_STATE_FILE` 之类的旁路，凭据来源必须是 `local-session`。
 
