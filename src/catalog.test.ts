@@ -74,15 +74,17 @@ test("an absent selection serves everything, an empty selection serves nothing",
 test("an untouched picker serves only the measured-usable ids, verified first", () => {
 	const rows = chatModelsOf([
 		{ id: "deepseek-v4.1-flash" },
-		{ id: "glm-5.1" },
 		{ id: "deepseek-v4-flash" },
+		{ id: "glm-5.2" },
+		{ id: "glm-5.3" },
 		{ id: "openpangu-2.0-pro" },
 	]);
 	assert.deepEqual(
 		usableModelsOf(rows).map((row) => row.id),
-		["deepseek-v4-flash", "glm-5.1"],
+		["glm-5.3", "glm-5.2"],
 	);
-	assert.ok(MEASURED_USABLE_MODEL_IDS.includes("deepseek-v4-flash"));
+	assert.ok(MEASURED_USABLE_MODEL_IDS.includes("glm-5.3"));
+	assert.ok(!MEASURED_USABLE_MODEL_IDS.includes("deepseek-v4-flash"));
 });
 
 test("a disjoint entitlement set falls back to the whole catalog instead of nothing", () => {
@@ -116,7 +118,7 @@ test("KNOWN_MODEL_IDS are the ids verified in OfficeAce's own agent config", () 
 });
 
 test("VERIFIED_WORKING_MODEL_IDS records the id a real completion answered for", () => {
-	assert.deepEqual(VERIFIED_WORKING_MODEL_IDS, ["deepseek-v4-flash"]);
+	assert.deepEqual(VERIFIED_WORKING_MODEL_IDS, ["glm-5.3"]);
 });
 
 test("the chat heuristic drops the live catalog's non-chat ids", () => {

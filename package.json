@@ -2,7 +2,7 @@
   "name": "dsh-connect-officeace",
   "displayName": "DSH Connect OfficeAce",
   "description": "把本机已登录的华为果办（OfficeAce）账号接入 DeepSeek Harness：OpenAI 兼容对话模型（含工具调用透传）、免 API Key。上游协议只实现已在参考实现或本机安装中核实过的部分，未核实的能力不实现并在 docs/protocol.md 标注。",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "license": "MIT",
   "type": "module",
   "engines": {

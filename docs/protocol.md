@@ -113,20 +113,24 @@ providerState:
 
 ### 2.4 模型可用性
 
-`GET /v1/models` 实测返回 38 条，字段只有 `id` / `object` / `created` / `owned_by`，**没有上下文长度、没有能力标记**，且混着 chat / 图像 / 视频 / embedding / rerank 模型。
+`GET /v1/models` 实测返回 37 条，字段只有 `id` / `object` / `created` / `owned_by`，**没有上下文长度、没有能力标记**，且混着 chat / 图像 / 视频 / embedding / rerank 模型。
 
-两个值得记的实测结果：
+同一账号相隔三天的两次全量实测（对每条 chat id 发一次 `max_tokens:8` 的最小补全）：
 
-- `deepseek-v4.1-flash`（OfficeAce 自己 agent 配置里的 defaultModel）→ **404** `ModelArts.81016 The model … is not available with api url /inference/v1/chat/completions`
-- `deepseek-v4-flash` → **200**，正常返回
+| 日期 | 目录 | chat | 真能用 |
+|---|---|---|---|
+| 2026-11-16 | 38 条 | 20 条 | 6 条（含 `deepseek-v4-flash`、`glm-5.1`） |
+| 2026-11-19 | 37 条 | 19 条 | 4 条（`deepseek-v4-flash`、`glm-5.1` 变 404） |
 
-全量实测（2026-11-16，本机账号）：对目录里 20 条 chat id 逐个发 `max_tokens:8` 的最小补全，**只有 6 条返回 200**：`deepseek-v4-flash`、`glm-5.3`、`glm-5.2`、`glm-5.1`、`deepseek-v4.1-flash-0930`、`deepseek-v4-flash-0731`。其余 14 条失败：`ModelArts.81009 Invalid model`（模型名在该网关不存在）、`ModelArts.81016 … not available with api url`（存在但当前 api url 不提供）、`ModelArts.81004 … you do not have access to it`（无权限）三类都有。目录里另有 18 条图像/视频/embedding/rerank 模型被名称启发式过滤掉。
+2026-11-19 的 4 条：`glm-5.3`、`glm-5.2`、`deepseek-v4.1-flash-0930`、`deepseek-v4-flash-0731`。其余 15 条失败，三类都有：`ModelArts.81009 Invalid model`（该网关没有这个模型名）、`ModelArts.81016 … not available with api url`（存在但当前 api url 不提供）、`ModelArts.81004 … you do not have access to it`（无权限）。目录里另有 18 条图像/视频/embedding/rerank 模型被名称启发式过滤掉。`deepseek-v4.1-flash`（果办自己 agent 配置里的 defaultModel）两次都是 404。
 
-所以「列在 `/v1/models` 里」不等于「这个账号能调用」。插件据此：
+所以「列在 `/v1/models` 里」不等于「这个账号能调用」，而且**可用集合会漂移**。插件据此：
 
-- `MEASURED_USABLE_MODEL_IDS` 记这 6 条，**未勾选任何模型时选择器只列它们**（顺序把实测默认 `deepseek-v4-flash` 排最前）；
-- 账号没有这 6 条中任何一条时回退到整个目录，避免选择器变空；
-- 设置里勾选 `enabledModelIds` 后以勾选为准（用户自己的账号可能开通了别的模型）。
+- `MEASURED_USABLE_MODEL_IDS` 记最近一次实测可用的 4 条，**未勾选任何模型时选择器只列它们**（实测默认 `glm-5.3` 排最前）；
+- 账号没有这 4 条中任何一条时回退到整个目录，避免选择器变空；
+- 设置里勾选 `enabledModelIds` 后以勾选为准（用户自己的账号可能开通了别的模型）；
+- 模型不可用（404 `81009` / `81016`）时，上游原文会被改写成可执行提示：「请在 设置 → 果办 里勾选其它模型，或运行 `npm run e2e` 重新实测」；
+- 清单过期就重跑 `npm run e2e`——它是唯一会真的打一次补全的检查，`doctor --network` 只列目录、不验证 entitlement。
 
 ## 3. 对话协议【实测】
 

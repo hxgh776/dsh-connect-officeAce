@@ -4,6 +4,8 @@ out-test/
 .refs/
 .evidence/
 *.tgz
+# release artifacts are the provenance trail — keep them, unlike ad-hoc packs
+!release/**/*.tgz
 *.log
 
 # Runtime-owned scaffolding in the working directory — not part of this repo.

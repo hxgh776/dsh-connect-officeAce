@@ -33,20 +33,28 @@ export declare const DEFAULT_MAX_OUTPUT_TOKENS = 32000;
  * /inference/v1/chat/completions") while `deepseek-v4-flash` works.
  */
 export declare const KNOWN_MODEL_IDS: readonly string[];
-/** Model ids this repository measured a 200 + SSE completion for. */
+/** Model id this repository measured a 200 + SSE completion for. */
 export declare const VERIFIED_WORKING_MODEL_IDS: readonly string[];
 /**
- * Chat ids that answered 200 on the inspected account (2026-11-16), ordered so
- * the verified default comes first. MEASURED, not assumed: the same run sent a
- * one-word completion to every chat id the gateway lists, and 14 of 20 answered
- * 404 / 403. A listed model is therefore NOT necessarily an entitled model, so
- * the picker defaults to this set instead of the raw catalog.
+ * Chat ids that answered 200 on the inspected account (**re-measured
+ * 2026-11-19**), ordered so the verified default comes first. MEASURED, not
+ * assumed: the same run sent a one-word completion to every chat id the gateway
+ * lists, and 15 of 19 answered 404 / 403. A listed model is therefore NOT
+ * necessarily an entitled model, so the picker defaults to this set instead of
+ * the raw catalog.
+ *
+ * This set goes stale — entitlements move. On 2026-11-16 the usable set was
+ * six ids including `deepseek-v4-flash` and `glm-5.1`; by 2026-11-19 both of
+ * those answered 404 `ModelArts.81009` while `glm-5.3` / `glm-5.2` /
+ * `deepseek-v4.1-flash-0930` / `deepseek-v4-flash-0731` answered 200. Re-measure
+ * with `npm run e2e` (it probes the selected model for real) before assuming a
+ * newer list holds.
  *
  * The set is account-specific. A different login may entitle different ids;
  * that is what `enabledModelIds` is for.
  */
 export declare const MEASURED_USABLE_MODEL_IDS: readonly string[];
-/** Default model for `probe`: the one verified to answer on a real account. */
+/** Default model for `probe` / `e2e`: the one verified to answer on a real account. */
 export declare const DEFAULT_PROBE_MODEL: string;
 /** Whether a model id looks like a chat model this plugin should offer. */
 export declare function isLikelyChatModel(id: string): boolean;

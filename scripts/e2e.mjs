@@ -16,8 +16,9 @@ import { AccessResolver } from "../lib/credentials.js";
 import { readLocalState } from "../lib/local-store.js";
 import { OfficeAceUpstream } from "../lib/upstream.js";
 import { createShim } from "../lib/shim.js";
+import { DEFAULT_PROBE_MODEL } from "../lib/catalog.js";
 
-const MODEL = process.env.DSH_OFFICEACE_E2E_MODEL ?? "deepseek-v4-flash";
+const MODEL = process.env.DSH_OFFICEACE_E2E_MODEL ?? DEFAULT_PROBE_MODEL;
 const results = [];
 let failed = 0;
 

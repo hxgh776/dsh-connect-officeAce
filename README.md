@@ -18,8 +18,8 @@
 | 复用本机 OfficeAce 登录态（免 Key） | ✅ 已实现；真机解出网关与凭据 | **实测**：wincred manifest/chunks → base64 → JSON |
 | 模型网关地址与鉴权 | ✅ 实测 | `https://<model_api_url_base>/v1` + Basic app-key |
 | 对话：SSE / reasoning / tool_calls / usage | ✅ 实测 200 + 流式增量 | 见 protocol §3 |
-| 模型可用性（目录 ≠ 可用） | ✅ 实测：38 条目录 → 20 条 chat → **6 条真能用** | 逐个发最小补全，14 条 404/403；默认只列这 6 条 |
-| 上游端到端 `probe` | ✅ 真跑通（`deepseek-v4-flash`） | 见下方验证 |
+| 模型可用性（目录 ≠ 可用） | ✅ 实测：37 条目录 → 19 条 chat → **4 条真能用** | 逐个发最小补全，15 条 404/403；默认只列这 4 条 |
+| 上游端到端 `probe` | ✅ 真跑通（`glm-5.3`） | 见下方验证 |
 | 设置面板（`settings.section`） | ✅ 已实现；浏览器端脚本静态校验 | `src/client.js` → `lib/client.js`，见「设置面板」 |
 | 用量 / 积分看板 | ❌ 未实现 | 没有可验证的查询接口 |
 | 每日签到、模型管理 UI、多区域面板 | ❌ 不在范围 | 无证据，不臆造 |
@@ -108,16 +108,16 @@ OK   install      找到 OfficeAce 本地状态库 data/storage.sqlite
 OK   local-store  本地状态库可读（只读打开）
 OK   session      已登录（provider=huawei-oauth，expiresAt=2026-11-16T15:12:35.397Z）
 OK   credential   访问凭据已解析（来源：local-session，baseUrl：https://modelgw-0006.…/v1）
-OK   upstream     模型网关 /v1/models 可用（38 个模型）
+OK   upstream     模型网关 /v1/models 可用（37 个模型）
 ```
 
-真机 `probe --tools --json`：`ok:true`，`model:"deepseek-v4-flash"`，`status:200`，usage 含 `reasoning_tokens:107`。
+真机 `probe --json`（2026-11-19）：`ok:true`，`model:"glm-5.3"`，`status:200`，带 `reasoning` 增量与 usage。
 
 ## 已知限制
 
 - **受限沙箱里 Node 不能 spawn 子进程**（`spawn EPERM`）。此时凭据无法解析，`doctor` 会明确报 `powerShell_blocked`；可用 `DSH_OFFICEACE_PROVIDER_STATE_FILE=<已解码的 provider-state.json>` 做离线诊断（仅测试用，文件含凭据，用完即删）。DSH 宿主进程/普通终端不受此限制。
 - 上下文窗口仍是假设值（见 protocol §4）。
-- 上游可用模型因账号而异。**`/v1/models` 列出的模型不等于该账号有权限调用**：本机实测目录 38 条、其中 20 条看起来是对话模型，逐个发最小补全后只有 6 条返回 200 —— `deepseek-v4-flash`、`glm-5.3`、`glm-5.2`、`glm-5.1`、`deepseek-v4.1-flash-0930`、`deepseek-v4-flash-0731`。其余 14 条返回 404（`ModelArts.81009 Invalid model` / `81016 not available with api url`）或 403（无权限），包括 OfficeAce 自己配置里的默认模型 `deepseek-v4.1-flash`。所以未勾选时插件只列这 6 条；账号不同可自行在设置里勾选。
+- 上游可用模型因账号而异，而且**会随时间变化**。**`/v1/models` 列出的模型不等于该账号有权限调用**：2026-11-19 复测时目录 37 条、其中 19 条看起来是对话模型，逐个发最小补全后只有 **4 条**返回 200 —— `glm-5.3`、`glm-5.2`、`deepseek-v4.1-flash-0930`、`deepseek-v4-flash-0731`；其余 15 条返回 404（`ModelArts.81009 Invalid model` / `81016 not available with api url`）或 403（无权限）。注意 11-16 还能用的 `deepseek-v4-flash`、`glm-5.1` 到 11-19 已变成 404，果办自己配置里的默认模型 `deepseek-v4.1-flash` 始终不可用。所以未勾选时插件只列这 4 条；账号不同或清单过期时，跑 `npm run e2e` 重新实测，或在设置里手动勾选。
 
 ## 隐私
 

@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.2 — 2026-11-19
+
+修掉「默认模型过期」：0.2.1 把 `deepseek-v4-flash` 当作实测可用并设为默认，但该 id 到 11-19 已变成 404 `ModelArts.81009`——桌面端默认路径因此每条消息都 400。
+
+### 修复
+
+- `src/catalog.ts`：重新实测后 `MEASURED_USABLE_MODEL_IDS` 收缩为 4 条（`glm-5.3`、`glm-5.2`、`deepseek-v4.1-flash-0930`、`deepseek-v4-flash-0731`），默认取 `glm-5.3`；`VERIFIED_WORKING_MODEL_IDS` 同步。注释写明这份清单会漂移，以及 11-16 → 11-19 的变化。
+- `src/upstream.ts`：新增 `isModelUnavailable()`。模型返回 404 `81009` / `81016` 时，错误信息改写为可执行提示（「请在 设置 → 果办 里勾选其它模型，或运行 `npm run e2e` 重新实测」），而不是把网关原文直接抛给用户。
+- `scripts/e2e.mjs`：默认模型跟随 `DEFAULT_PROBE_MODEL`，不带任何环境变量时 7/7。
+- README / protocol：目录 38→37、chat 20→19、可用 6→4 的数字与清单同步；补记两天的实测对比。
+
+### 验证
+
+- `npm run check` → 69/69，client 静态校验 18 项通过
+- `npm run e2e`（无环境变量）→ 7/7
+- `dsh --profile headless --patch <officeace 默认模型> "Reply with exactly: OK"` → `OK`
+
 ## 0.2.1 — 2026-11-16
 
 补上**浏览器端**：此前只有服务端，DSH 设置页里看不到这个插件。

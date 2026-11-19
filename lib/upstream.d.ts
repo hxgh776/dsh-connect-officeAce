@@ -31,6 +31,13 @@ export interface UpstreamOptions {
 export declare function authorizationOf(access: ResolvedAccess): string;
 /** Map an HTTP failure onto the plugin's error kinds. */
 export declare function classifyFailure(httpStatus: number, message: string): OfficeAceError;
+/**
+ * Whether a failure means "this account cannot call this model" rather than a
+ * stale credential or a broken gateway. The gateway lists chat ids the account
+ * is not entitled to, so this is a routine outcome: the user needs an
+ * actionable hint, not the raw envelope.
+ */
+export declare function isModelUnavailable(httpStatus: number, message: string): boolean;
 /** Pull a human-usable message out of an OpenAI/APIG error body. */
 export declare function errorMessageOf(raw: string): string;
 export declare class OfficeAceUpstream {
